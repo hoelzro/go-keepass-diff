@@ -12,20 +12,6 @@ import (
 	"time"
 )
 
-type zeroReader struct{}
-
-func (z *zeroReader) Read(p []byte) (n int, err error) {
-	for i := range p {
-		p[i] = 0
-	}
-
-	return len(p), nil
-}
-
-func newZeroReader() io.Reader {
-	return &zeroReader{}
-}
-
 type entry struct {
 	name             string
 	username         string
