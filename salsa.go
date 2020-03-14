@@ -75,6 +75,10 @@ func encryptBytes(r *Salsa20Reader, dst, src []byte) {
 		}
 
 		// we know r.offset is 0 here, so you don't need to do the pre-warming of outputBytes
+		if r.offset%4 != 0 {
+			// XXX avoid function call? (it might get inlined)
+			binary.LittleEndian.PutUint32(outputBytes[:], r.output[r.offset/4])
+		}
 
 		// XXX unroll this into something less shitty
 		for ; r.offset < 64; r.offset, offset = r.offset+1, offset+1 {
@@ -83,10 +87,10 @@ func encryptBytes(r *Salsa20Reader, dst, src []byte) {
 			}
 
 			// XXX use bitwise ops? (0b11)
-			//if r.offset%4 == 0 {
-			// XXX avoid function call? (it might get inlined)
-			binary.LittleEndian.PutUint32(outputBytes[:], r.output[r.offset/4])
-			//}
+			if r.offset%4 == 0 {
+				// XXX avoid function call? (it might get inlined)
+				binary.LittleEndian.PutUint32(outputBytes[:], r.output[r.offset/4])
+			}
 			dst[offset] = src[offset] ^ outputBytes[r.offset%4]
 		}
 		r.offset = 0
