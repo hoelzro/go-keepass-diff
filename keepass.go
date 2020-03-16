@@ -39,6 +39,18 @@ const (
 	StreamAlgorithmArcFourVariant = 1
 	StreamAlgorithmSalsa20        = 2
 	StreamAlgorithmChaCha20       = 3
+
+	VariantMapVersion      = 0x0100
+	VariantMapCriticalMask = 0xff00
+
+	VariantMapFieldTypeEnd       = 0
+	VariantMapFieldTypeUint32    = 0x04
+	VariantMapFieldTypeUint64    = 0x05
+	VariantMapFieldTypeBool      = 0x08
+	VariantMapFieldTypeInt32     = 0x0c
+	VariantMapFieldTypeInt64     = 0x0d
+	VariantMapFieldTypeString    = 0x18
+	VariantMapFieldTypeByteArray = 0x42
 )
 
 var CipherAES256 []byte = []byte{0x31, 0xc1, 0xf2, 0xe6, 0xbf, 0x71, 0x43, 0x50, 0xbe, 0x58, 0x05, 0x21, 0x6a, 0xfc, 0x5a, 0xff}
@@ -435,13 +447,70 @@ func (k *v4Reader) decrypt(r io.Reader, password string) (*KeePassFile, error) {
 	return decodeBlocks(plaintextReader, header.protectedStreamKey)
 }
 
+func readVariantMap(data []byte) (map[string]interface{}, error) {
+	var version uint16
+
+	r := bytes.NewReader(data)
+	// XXX length checks/error checks
+	binary.Read(r, binary.LittleEndian, &version)
+	version &= VariantMapCriticalMask
+
+	maxVersion := uint16(VariantMapVersion & VariantMapCriticalMask)
+	if version > maxVersion {
+		return nil, errors.New("unsupported variant map version")
+	}
+
+	result := make(map[string]interface{})
+
+	for {
+		var fieldType uint8
+		var nameLen uint32
+		var valueLen uint32
+
+		// XXX length checks/error checks
+		binary.Read(r, binary.LittleEndian, &fieldType)
+
+		if fieldType == VariantMapFieldTypeEnd {
+			return result, nil
+		}
+
+		binary.Read(r, binary.LittleEndian, &nameLen)
+		nameBytes := make([]byte, nameLen)
+		r.Read(nameBytes)
+		binary.Read(r, binary.LittleEndian, &valueLen)
+		valueBytes := make([]byte, valueLen)
+		r.Read(valueBytes)
+
+		name := string(nameBytes)
+
+		switch fieldType {
+		case VariantMapFieldTypeUint32:
+			result[name] = binary.LittleEndian.Uint32(valueBytes)
+		case VariantMapFieldTypeUint64:
+			result[name] = binary.LittleEndian.Uint32(valueBytes)
+		case VariantMapFieldTypeBool:
+			result[name] = valueBytes[0] != 0
+		case VariantMapFieldTypeInt32:
+			var value int32
+			binary.Read(bytes.NewReader(valueBytes), binary.LittleEndian, &value)
+			result[name] = value
+		case VariantMapFieldTypeInt64:
+			var value int64
+			binary.Read(bytes.NewReader(valueBytes), binary.LittleEndian, &value)
+			result[name] = value
+		case VariantMapFieldTypeString:
+			result[name] = string(valueBytes)
+		case VariantMapFieldTypeByteArray:
+			result[name] = valueBytes
+		default:
+			return nil, errors.New("unknown field type in variant map")
+		}
+	}
+}
+
 func (k *v4Reader) readDatabaseHeader(r io.Reader) (*keepassDatabaseHeader, error) {
 	var masterSeed []byte
-	var transformSeed []byte
 	var encryptionIV []byte
-	var protectedStreamKey []byte
-	var streamStartBytes []byte
-	var rounds *uint64
 
 headerLoop:
 	for {
@@ -500,29 +569,8 @@ headerLoop:
 				return nil, errors.New("insufficient field data")
 			}
 			masterSeed = fieldData
-		case TransformSeed:
-			if len(fieldData) != 32 {
-				return nil, errors.New("insufficient field data")
-			}
-			transformSeed = fieldData
-		case TransformRounds:
-			rounds = new(uint64)
-			err := binary.Read(bytes.NewReader(fieldData), binary.LittleEndian, rounds)
-			if err != nil {
-				return nil, err
-			}
 		case EncryptionIV:
 			encryptionIV = fieldData
-		case ProtectedStreamKey:
-			if len(fieldData) != 32 {
-				return nil, errors.New("insufficient field data")
-			}
-			protectedStreamKey = fieldData
-		case StreamStartBytes:
-			if len(fieldData) != 32 {
-				return nil, errors.New("insufficient field data")
-			}
-			streamStartBytes = fieldData
 		case InnerRandomStreamID:
 			var streamID uint32
 			err := binary.Read(bytes.NewReader(fieldData), binary.LittleEndian, &streamID)
@@ -538,6 +586,12 @@ headerLoop:
 			if streamID != StreamAlgorithmSalsa20 {
 				return nil, errors.New("unsupported stream algorithm")
 			}
+		case KdfParameters:
+			kdfParameters, err := readVariantMap(fieldData)
+			if err != nil {
+				return nil, err
+			}
+			fmt.Println(kdfParameters)
 		default:
 			return nil, errors.New("invalid header field ID")
 		}
@@ -546,29 +600,13 @@ headerLoop:
 	if masterSeed == nil {
 		return nil, errors.New("master seed field not found")
 	}
-	if transformSeed == nil {
-		return nil, errors.New("transform seed field not found")
-	}
 	if encryptionIV == nil {
 		return nil, errors.New("encryption IV field not found")
 	}
-	if protectedStreamKey == nil {
-		return nil, errors.New("protected stream key field not found")
-	}
-	if streamStartBytes == nil {
-		return nil, errors.New("stream start bytes field not found")
-	}
-	if rounds == nil {
-		return nil, errors.New("transform rounds field not found")
-	}
 
 	return &keepassDatabaseHeader{
-		masterSeed:         masterSeed,
-		transformSeed:      transformSeed,
-		encryptionIV:       encryptionIV,
-		protectedStreamKey: protectedStreamKey,
-		streamStartBytes:   streamStartBytes,
-		rounds:             *rounds,
+		masterSeed:   masterSeed,
+		encryptionIV: encryptionIV,
 	}, nil
 }
 
