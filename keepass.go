@@ -18,6 +18,7 @@ const (
 	Signature2              = 0xB54BFB67
 	FileVersionCriticalMask = 0xFFFF0000
 	FileVersion3            = 0x00030000
+	FileVersion4            = 0x00040000
 
 	EndOfHeader         = 0
 	Comment             = 1
@@ -95,11 +96,13 @@ func checkMagicSignature(r io.Reader) (keepassReader, error) {
 
 	magic.Version &= FileVersionCriticalMask
 
-	if magic.Version != FileVersion3 {
+	if magic.Version == FileVersion3 {
+		return &v3Reader{}, nil
+	} else if magic.Version == FileVersion4 {
+		return &v4Reader{}, nil
+	} else {
 		return nil, errors.New("version mismatch")
 	}
-
-	return &v3Reader{}, nil
 }
 
 type keepassDatabaseHeader struct {
@@ -111,7 +114,156 @@ type keepassDatabaseHeader struct {
 	rounds             uint64
 }
 
-func readDatabaseHeader(r io.Reader) (*keepassDatabaseHeader, error) {
+func makeMasterKey(header *keepassDatabaseHeader, password string) ([]byte, error) {
+	passwordHash := sha256.Sum256([]byte(password))
+
+	compositeKey := sha256.Sum256(passwordHash[:])
+
+	transformedKey := compositeKey
+	aesCipher, err := aes.NewCipher(header.transformSeed)
+	if err != nil {
+		return nil, err
+	}
+	// XXX multithread this using a stretched out slice
+	for i := uint64(0); i < header.rounds; i++ {
+		aesCipher.Encrypt(transformedKey[0:16], transformedKey[0:16])
+		aesCipher.Encrypt(transformedKey[16:32], transformedKey[16:32])
+	}
+	transformedKey = sha256.Sum256(transformedKey[:])
+
+	h := sha256.New()
+	h.Write(header.masterSeed)
+	h.Write(transformedKey[:])
+	return h.Sum(nil), nil
+}
+
+func checkFirstBlock(r io.Reader, header *keepassDatabaseHeader, decrypt cipher.BlockMode) error {
+	firstCipherBlock := make([]byte, len(header.streamStartBytes))
+	// XXX length check?
+	_, err := r.Read(firstCipherBlock)
+	if err != nil {
+		return err
+	}
+	firstPlaintextBlock := make([]byte, len(header.streamStartBytes))
+	decrypt.CryptBlocks(firstPlaintextBlock, firstCipherBlock)
+
+	if !bytes.Equal(firstPlaintextBlock, header.streamStartBytes) {
+		return errors.New("invalid password or corrupt database")
+	}
+
+	return nil
+}
+
+func decodeBlocks(r io.Reader, protectedStreamKey []byte) (*KeePassFile, error) {
+	var result *KeePassFile
+
+	actualKey := sha256.Sum256(protectedStreamKey)
+	cipherStream, err := NewSalsa20Reader(newZeroReader(), actualKey[:], KeepassIV)
+	if err != nil {
+		return nil, err
+	}
+
+	for {
+		var blockID uint32
+		err := binary.Read(r, binary.LittleEndian, &blockID)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+
+			return nil, err
+		}
+
+		blockHash := make([]byte, 32)
+		// XXX is short read communicated as an error?
+		_, err = r.Read(blockHash)
+		if err != nil {
+			return nil, err
+		}
+
+		var blockSize uint32
+		err = binary.Read(r, binary.LittleEndian, &blockSize)
+		if err != nil {
+			return nil, err
+		}
+
+		if blockSize == 0 {
+			if !bytes.Equal(blockHash, []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}) {
+				return nil, errors.New("invalid hash of final block")
+			}
+			break
+		}
+
+		blockData := make([]byte, blockSize)
+		_, err = r.Read(blockData)
+		if err != nil {
+			return nil, err
+		}
+
+		gzipReader, err := gzip.NewReader(bytes.NewReader(blockData))
+		if err != nil {
+			return nil, err
+		}
+
+		uncompressedPayload, err := ioutil.ReadAll(gzipReader)
+		if err != nil {
+			return nil, err
+		}
+
+		keepassFile := KeePassFile{}
+		keepassFile.Root.Group.cipherStream = cipherStream
+
+		err = xml.Unmarshal(uncompressedPayload, &keepassFile)
+		if err != nil {
+			return nil, err
+		}
+
+		result = &keepassFile
+	}
+
+	return result, nil
+}
+
+type keepassReader interface {
+	decrypt(io.Reader, string) (*KeePassFile, error)
+}
+
+type v3Reader struct{}
+
+func (k *v3Reader) decrypt(r io.Reader, password string) (*KeePassFile, error) {
+	header, err := k.readDatabaseHeader(r)
+	if err != nil {
+		return nil, err
+	}
+
+	masterKey, err := makeMasterKey(header, password)
+
+	aesCipher, err := aes.NewCipher(masterKey)
+	if err != nil {
+		return nil, err
+	}
+
+	decrypt := cipher.NewCBCDecrypter(aesCipher, header.encryptionIV)
+
+	err = checkFirstBlock(r, header, decrypt)
+	if err != nil {
+		return nil, err
+	}
+
+	ciphertext, err := ioutil.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+
+	plaintext := make([]byte, len(ciphertext))
+	decrypt.CryptBlocks(plaintext, ciphertext)
+
+	plaintextReader := bytes.NewReader(plaintext)
+
+	return decodeBlocks(plaintextReader, header.protectedStreamKey)
+}
+
+func (k *v3Reader) readDatabaseHeader(r io.Reader) (*keepassDatabaseHeader, error) {
 	var masterSeed []byte
 	var transformSeed []byte
 	var encryptionIV []byte
@@ -248,124 +400,10 @@ headerLoop:
 	}, nil
 }
 
-func makeMasterKey(header *keepassDatabaseHeader, password string) ([]byte, error) {
-	passwordHash := sha256.Sum256([]byte(password))
+type v4Reader struct{}
 
-	compositeKey := sha256.Sum256(passwordHash[:])
-
-	transformedKey := compositeKey
-	aesCipher, err := aes.NewCipher(header.transformSeed)
-	if err != nil {
-		return nil, err
-	}
-	// XXX multithread this using a stretched out slice
-	for i := uint64(0); i < header.rounds; i++ {
-		aesCipher.Encrypt(transformedKey[0:16], transformedKey[0:16])
-		aesCipher.Encrypt(transformedKey[16:32], transformedKey[16:32])
-	}
-	transformedKey = sha256.Sum256(transformedKey[:])
-
-	h := sha256.New()
-	h.Write(header.masterSeed)
-	h.Write(transformedKey[:])
-	return h.Sum(nil), nil
-}
-
-func checkFirstBlock(r io.Reader, header *keepassDatabaseHeader, decrypt cipher.BlockMode) error {
-	firstCipherBlock := make([]byte, len(header.streamStartBytes))
-	// XXX length check?
-	_, err := r.Read(firstCipherBlock)
-	if err != nil {
-		return err
-	}
-	firstPlaintextBlock := make([]byte, len(header.streamStartBytes))
-	decrypt.CryptBlocks(firstPlaintextBlock, firstCipherBlock)
-
-	if !bytes.Equal(firstPlaintextBlock, header.streamStartBytes) {
-		return errors.New("invalid password or corrupt database")
-	}
-
-	return nil
-}
-
-func decodeBlocks(r io.Reader, protectedStreamKey []byte) (*KeePassFile, error) {
-	var result *KeePassFile
-
-	actualKey := sha256.Sum256(protectedStreamKey)
-	cipherStream, err := NewSalsa20Reader(newZeroReader(), actualKey[:], KeepassIV)
-	if err != nil {
-		return nil, err
-	}
-
-	for {
-		var blockID uint32
-		err := binary.Read(r, binary.LittleEndian, &blockID)
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-
-			return nil, err
-		}
-
-		blockHash := make([]byte, 32)
-		// XXX is short read communicated as an error?
-		_, err = r.Read(blockHash)
-		if err != nil {
-			return nil, err
-		}
-
-		var blockSize uint32
-		err = binary.Read(r, binary.LittleEndian, &blockSize)
-		if err != nil {
-			return nil, err
-		}
-
-		if blockSize == 0 {
-			if !bytes.Equal(blockHash, []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}) {
-				return nil, errors.New("invalid hash of final block")
-			}
-			break
-		}
-
-		blockData := make([]byte, blockSize)
-		_, err = r.Read(blockData)
-		if err != nil {
-			return nil, err
-		}
-
-		gzipReader, err := gzip.NewReader(bytes.NewReader(blockData))
-		if err != nil {
-			return nil, err
-		}
-
-		uncompressedPayload, err := ioutil.ReadAll(gzipReader)
-		if err != nil {
-			return nil, err
-		}
-
-		keepassFile := KeePassFile{}
-		keepassFile.Root.Group.cipherStream = cipherStream
-
-		err = xml.Unmarshal(uncompressedPayload, &keepassFile)
-		if err != nil {
-			return nil, err
-		}
-
-		result = &keepassFile
-	}
-
-	return result, nil
-}
-
-type keepassReader interface {
-	decrypt(io.Reader, string) (*KeePassFile, error)
-}
-
-type v3Reader struct{}
-
-func (k *v3Reader) decrypt(r io.Reader, password string) (*KeePassFile, error) {
-	header, err := readDatabaseHeader(r)
+func (k *v4Reader) decrypt(r io.Reader, password string) (*KeePassFile, error) {
+	header, err := k.readDatabaseHeader(r)
 	if err != nil {
 		return nil, err
 	}
@@ -395,6 +433,143 @@ func (k *v3Reader) decrypt(r io.Reader, password string) (*KeePassFile, error) {
 	plaintextReader := bytes.NewReader(plaintext)
 
 	return decodeBlocks(plaintextReader, header.protectedStreamKey)
+}
+
+func (k *v4Reader) readDatabaseHeader(r io.Reader) (*keepassDatabaseHeader, error) {
+	var masterSeed []byte
+	var transformSeed []byte
+	var encryptionIV []byte
+	var protectedStreamKey []byte
+	var streamStartBytes []byte
+	var rounds *uint64
+
+headerLoop:
+	for {
+		var fieldID uint8
+		// XXX length checks?
+		err := binary.Read(r, binary.LittleEndian, &fieldID)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+
+			return nil, err
+		}
+
+		var fieldLength uint32
+		// XXX length checks?
+		err = binary.Read(r, binary.LittleEndian, &fieldLength)
+		if err != nil {
+			return nil, err
+		}
+
+		fieldData := make([]byte, fieldLength)
+		_, err = r.Read(fieldData)
+		// XXX length checks?
+		if err != nil {
+			return nil, err
+		}
+
+		switch fieldID {
+		case EndOfHeader:
+			break headerLoop
+		case CipherID:
+			// if you extend this, you'll need to embed this information in
+			// the keepassDatabaseHeader struct, you'll need to check that
+			// that field's been set at the end of this function, and you'll
+			// need to actually use the proper algorithm during seed transformation
+			if !bytes.Equal(fieldData, CipherAES256) {
+				return nil, errors.New("unsupported cipher")
+			}
+		case CompressionFlags:
+			var compressionAlgorithm uint32
+			err := binary.Read(bytes.NewReader(fieldData), binary.LittleEndian, &compressionAlgorithm)
+			if err != nil {
+				return nil, err
+			}
+			// if you extend this, you'll need to embed this information in
+			// the keepassDatabaseHeader struct, you'll need to check that
+			// that field's been set at the end of this function, and you'll
+			// need to actually use the proper algorithm during block data
+			// reading
+			if compressionAlgorithm != CompressionAlgorithmGzip {
+				return nil, errors.New("unsupported compression algorithm")
+			}
+		case MasterSeed:
+			if len(fieldData) != 32 {
+				return nil, errors.New("insufficient field data")
+			}
+			masterSeed = fieldData
+		case TransformSeed:
+			if len(fieldData) != 32 {
+				return nil, errors.New("insufficient field data")
+			}
+			transformSeed = fieldData
+		case TransformRounds:
+			rounds = new(uint64)
+			err := binary.Read(bytes.NewReader(fieldData), binary.LittleEndian, rounds)
+			if err != nil {
+				return nil, err
+			}
+		case EncryptionIV:
+			encryptionIV = fieldData
+		case ProtectedStreamKey:
+			if len(fieldData) != 32 {
+				return nil, errors.New("insufficient field data")
+			}
+			protectedStreamKey = fieldData
+		case StreamStartBytes:
+			if len(fieldData) != 32 {
+				return nil, errors.New("insufficient field data")
+			}
+			streamStartBytes = fieldData
+		case InnerRandomStreamID:
+			var streamID uint32
+			err := binary.Read(bytes.NewReader(fieldData), binary.LittleEndian, &streamID)
+			if err != nil {
+				return nil, err
+			}
+
+			// if you extend this, you'll need to embed this information in
+			// the keepassDatabaseHeader struct, you'll need to check that
+			// that field's been set at the end of this function, and you'll
+			// need to actually use the proper algorithm during key/value pair
+			// reading
+			if streamID != StreamAlgorithmSalsa20 {
+				return nil, errors.New("unsupported stream algorithm")
+			}
+		default:
+			return nil, errors.New("invalid header field ID")
+		}
+	}
+
+	if masterSeed == nil {
+		return nil, errors.New("master seed field not found")
+	}
+	if transformSeed == nil {
+		return nil, errors.New("transform seed field not found")
+	}
+	if encryptionIV == nil {
+		return nil, errors.New("encryption IV field not found")
+	}
+	if protectedStreamKey == nil {
+		return nil, errors.New("protected stream key field not found")
+	}
+	if streamStartBytes == nil {
+		return nil, errors.New("stream start bytes field not found")
+	}
+	if rounds == nil {
+		return nil, errors.New("transform rounds field not found")
+	}
+
+	return &keepassDatabaseHeader{
+		masterSeed:         masterSeed,
+		transformSeed:      transformSeed,
+		encryptionIV:       encryptionIV,
+		protectedStreamKey: protectedStreamKey,
+		streamStartBytes:   streamStartBytes,
+		rounds:             *rounds,
+	}, nil
 }
 
 func decryptDatabase(r io.Reader, password string) (*KeePassFile, error) {
