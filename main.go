@@ -3,9 +3,6 @@
 package main
 
 import (
-	"bytes"
-	"encoding/base64"
-	"encoding/binary"
 	"fmt"
 	"log"
 	"os"
@@ -23,16 +20,11 @@ type entry struct {
 	modificationTime time.Time
 }
 
-const SecondsBetweenEpochAndYearZero = int64(-62135596800)
-
-func flattenGroupsHelper(group *KeePassGroup, groupMap map[string][]entry, prefix string) error {
+func flattenGroupsHelper(group *KeePassGroup, groupMap map[string][]entry, prefix string) {
 	fullGroupName := prefix + group.Name
 
 	for _, child := range group.Groups {
-		err := flattenGroupsHelper(&child, groupMap, fullGroupName+"/")
-		if err != nil {
-			return err
-		}
+		flattenGroupsHelper(&child, groupMap, fullGroupName+"/")
 	}
 
 	groupMap[fullGroupName] = make([]entry, 0, len(group.Entries))
@@ -43,41 +35,17 @@ func flattenGroupsHelper(group *KeePassGroup, groupMap map[string][]entry, prefi
 		username := e.KeyValues["UserName"]
 		notes := e.KeyValues["Notes"]
 
-		// XXX do this parsing in the XML unmarshal?
-		//     if you do, you can remove the error return type on this function
-		var lastModificationTime time.Time
-
-		lastModificationBytes, err := base64.StdEncoding.DecodeString(e.Times.LastModificationTime)
-		if err == nil {
-			var lastModificationSeconds uint64
-			err = binary.Read(bytes.NewReader(lastModificationBytes), binary.LittleEndian, &lastModificationSeconds)
-
-			if err != nil {
-				return err
-			}
-
-			lastModificationTime = time.Unix(int64(lastModificationSeconds)+SecondsBetweenEpochAndYearZero, 0)
-		} else {
-			lastModificationTime, err = time.Parse("2006-01-02T15:04:05Z", e.Times.LastModificationTime)
-		}
-
-		if err != nil {
-			return err
-		}
-
 		groupMap[fullGroupName] = append(groupMap[fullGroupName], entry{
 			name:             name,
 			username:         username,
 			password:         password,
 			notes:            notes,
-			modificationTime: lastModificationTime,
+			modificationTime: time.Time(e.Times.LastModificationTime),
 		})
 	}
-
-	return nil
 }
 
-func flattenGroups(k *KeePassFile) (map[string][]entry, error) {
+func flattenGroups(k *KeePassFile) map[string][]entry {
 	groups := make(map[string][]entry)
 	// XXX assert that len(k.Root.Group.Entries) == 0?
 	for _, g := range k.Root.Group.Groups {
@@ -85,13 +53,10 @@ func flattenGroups(k *KeePassFile) (map[string][]entry, error) {
 			continue
 		}
 
-		err := flattenGroupsHelper(&g, groups, "")
-		if err != nil {
-			return nil, err
-		}
+		flattenGroupsHelper(&g, groups, "")
 	}
 
-	return groups, nil
+	return groups
 }
 
 // XXX don't prompt for PW if checksum is same
@@ -156,11 +121,11 @@ func main() {
 
 	// XXX detect entry rename/move to different group
 	//     leverage history for ↑ (leverage history in general)
-	oneGroups, err := flattenGroups(dbOne)
+	oneGroups := flattenGroups(dbOne)
 	if err != nil {
 		log.Fatal(err)
 	}
-	twoGroups, err := flattenGroups(dbTwo)
+	twoGroups := flattenGroups(dbTwo)
 	if err != nil {
 		log.Fatal(err)
 	}

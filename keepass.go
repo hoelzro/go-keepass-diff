@@ -13,6 +13,7 @@ import (
 	"errors"
 	"io"
 	"io/ioutil"
+	"time"
 
 	"golang.org/x/crypto/chacha20"
 )
@@ -66,9 +67,10 @@ var CipherAES256 []byte = []byte{0x31, 0xc1, 0xf2, 0xe6, 0xbf, 0x71, 0x43, 0x50,
 
 var KeepassIV []byte = []byte{0xe8, 0x30, 0x09, 0x4b, 0x97, 0x20, 0x5d, 0x2a}
 
+type KeePassTime time.Time
+
 type KeePassTimes struct {
-	// XXX you could make a new type for this and impl UnmarshalXML for that type
-	LastModificationTime string `xml:"LastModificationTime"`
+	LastModificationTime KeePassTime `xml:"LastModificationTime"`
 }
 
 // XXX lower case struct name for privacy?

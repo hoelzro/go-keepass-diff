@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/xml"
+	"time"
 )
 
 func (entry *KeePassEntry) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
@@ -131,6 +134,40 @@ func (group *KeePassGroup) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 			}
 		}
 	}
+
+	return nil
+}
+
+const SecondsBetweenEpochAndYearZero = int64(-62135596800)
+
+func (t *KeePassTime) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	var stringValue string
+	err := d.DecodeElement(&stringValue, &start)
+	if err != nil {
+		return nil
+	}
+
+	var lastModificationTime time.Time
+
+	lastModificationBytes, err := base64.StdEncoding.DecodeString(stringValue)
+	if err == nil {
+		var lastModificationSeconds uint64
+		err = binary.Read(bytes.NewReader(lastModificationBytes), binary.LittleEndian, &lastModificationSeconds)
+
+		if err != nil {
+			return err
+		}
+
+		lastModificationTime = time.Unix(int64(lastModificationSeconds)+SecondsBetweenEpochAndYearZero, 0)
+	} else {
+		lastModificationTime, err = time.Parse("2006-01-02T15:04:05Z", stringValue)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	*t = KeePassTime(lastModificationTime)
 
 	return nil
 }
