@@ -3,6 +3,9 @@
 package main
 
 import (
+	"bytes"
+	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"log"
 	"os"
@@ -19,6 +22,8 @@ type entry struct {
 	password         string
 	modificationTime time.Time
 }
+
+const SecondsBetweenEpochAndYearZero = int64(-62135596800)
 
 func flattenGroupsHelper(group *KeePassGroup, groupMap map[string][]entry, prefix string) error {
 	fullGroupName := prefix + group.Name
@@ -40,7 +45,22 @@ func flattenGroupsHelper(group *KeePassGroup, groupMap map[string][]entry, prefi
 
 		// XXX do this parsing in the XML unmarshal?
 		//     if you do, you can remove the error return type on this function
-		lastModificationTime, err := time.Parse("2006-01-02T15:04:05Z", e.Times.LastModificationTime)
+		var lastModificationTime time.Time
+
+		lastModificationBytes, err := base64.StdEncoding.DecodeString(e.Times.LastModificationTime)
+		if err == nil {
+			var lastModificationSeconds uint64
+			err = binary.Read(bytes.NewReader(lastModificationBytes), binary.LittleEndian, &lastModificationSeconds)
+
+			if err != nil {
+				return err
+			}
+
+			lastModificationTime = time.Unix(int64(lastModificationSeconds)+SecondsBetweenEpochAndYearZero, 0)
+		} else {
+			lastModificationTime, err = time.Parse("2006-01-02T15:04:05Z", e.Times.LastModificationTime)
+		}
+
 		if err != nil {
 			return err
 		}
