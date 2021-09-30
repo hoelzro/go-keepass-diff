@@ -52,14 +52,14 @@ type KeePassTimes struct {
 // XXX lower case struct name for privacy?
 //     demarshal modification times/history/recycle bin for easier merging?
 type KeePassEntry struct {
-	cipherStream io.Reader
+	key [32]byte
 
 	Times     KeePassTimes
 	KeyValues map[string]string // XXX member name?
 }
 
 type KeePassGroup struct {
-	cipherStream io.Reader
+	key [32]byte
 
 	Name    string         `xml:"Name"`
 	Notes   string         `xml:"Notes"`
@@ -295,10 +295,6 @@ func decodeBlocks(r io.Reader, protectedStreamKey []byte) (*KeePassFile, error) 
 	var result *KeePassFile
 
 	actualKey := sha256.Sum256(protectedStreamKey)
-	cipherStream, err := NewSalsa20Reader(newZeroReader(), actualKey[:], KeepassIV)
-	if err != nil {
-		return nil, err
-	}
 
 	for {
 		var blockID uint32
@@ -348,7 +344,7 @@ func decodeBlocks(r io.Reader, protectedStreamKey []byte) (*KeePassFile, error) 
 		}
 
 		keepassFile := KeePassFile{}
-		keepassFile.Root.Group.cipherStream = cipherStream
+		keepassFile.Root.Group.key = actualKey
 
 		err = xml.Unmarshal(uncompressedPayload, &keepassFile)
 		if err != nil {
