@@ -6,11 +6,14 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/xml"
 	"errors"
 	"io"
 	"io/ioutil"
+
+	"golang.org/x/crypto/salsa20"
 )
 
 const (
@@ -52,19 +55,52 @@ type KeePassTimes struct {
 // XXX lower case struct name for privacy?
 //     demarshal modification times/history/recycle bin for easier merging?
 type KeePassEntry struct {
-	key [32]byte
-
-	Times     KeePassTimes
+	Times KeePassTimes
+	// RawKeyValues get cleared by DecryptPassword
+	RawKeyValues []struct {
+		Key   string `xml:"Key"`
+		Value struct {
+			Value     string `xml:",chardata"`
+			Protected bool   `xml:"Protected,attr"`
+		} `xml:"Value"`
+	} `xml:"String"`
+	// KeyValues get populated by DecryptPassword
 	KeyValues map[string]string // XXX member name?
 }
 
-type KeePassGroup struct {
-	key [32]byte
+func (e *KeePassEntry) DecryptPassword(key [32]byte) {
+	e.KeyValues = make(map[string]string, len(e.RawKeyValues))
+	for _, v := range e.RawKeyValues {
+		if v.Value.Protected {
+			rawBytes, err := base64.StdEncoding.DecodeString(v.Value.Value)
+			if err != nil {
+				panic(err.Error())
+			}
+			salsa20.XORKeyStream(rawBytes, rawBytes, KeepassIV, &key)
+			e.KeyValues[v.Key] = string(rawBytes)
+			continue
+		}
 
+		e.KeyValues[v.Key] = v.Value.Value
+	}
+	e.RawKeyValues = nil
+}
+
+type KeePassGroup struct {
 	Name    string         `xml:"Name"`
 	Notes   string         `xml:"Notes"`
 	Groups  []KeePassGroup `xml:"Group"`
 	Entries []KeePassEntry `xml:"Entry"`
+}
+
+func (g KeePassGroup) DecryptPasswords(key [32]byte) {
+	for i := range g.Groups {
+		g.Groups[i].DecryptPasswords(key)
+	}
+
+	for i := range g.Entries {
+		g.Entries[i].DecryptPassword(key)
+	}
 }
 
 type KeePassFile struct {
@@ -294,8 +330,6 @@ var z32 = make([]byte, 32)
 func decodeBlocks(r io.Reader, protectedStreamKey []byte) (*KeePassFile, error) {
 	var result *KeePassFile
 
-	actualKey := sha256.Sum256(protectedStreamKey)
-
 	for {
 		var blockID uint32
 		err := binary.Read(r, binary.LittleEndian, &blockID)
@@ -344,13 +378,13 @@ func decodeBlocks(r io.Reader, protectedStreamKey []byte) (*KeePassFile, error) 
 		}
 
 		keepassFile := KeePassFile{}
-		keepassFile.Root.Group.key = actualKey
 
 		err = xml.Unmarshal(uncompressedPayload, &keepassFile)
 		if err != nil {
 			return nil, err
 		}
 
+		keepassFile.Root.Group.DecryptPasswords(sha256.Sum256(protectedStreamKey))
 		result = &keepassFile
 	}
 
