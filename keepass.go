@@ -373,6 +373,9 @@ func decryptDatabase(r io.Reader, password string) (*KeePassFile, error) {
 	}
 
 	masterKey, err := makeMasterKey(header, password)
+	if err != nil {
+		return nil, err
+	}
 
 	aesCipher, err := aes.NewCipher(masterKey)
 	if err != nil {
