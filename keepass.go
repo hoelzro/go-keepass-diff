@@ -383,15 +383,12 @@ func decryptDatabase(r io.Reader, password string) (*KeePassFile, error) {
 		return nil, err
 	}
 
-	ciphertext, err := ioutil.ReadAll(r)
+	b, err := ioutil.ReadAll(r)
 	if err != nil {
 		return nil, err
 	}
 
-	plaintext := make([]byte, len(ciphertext))
-	decrypt.CryptBlocks(plaintext, ciphertext)
+	decrypt.CryptBlocks(b, b)
 
-	plaintextReader := bytes.NewReader(plaintext)
-
-	return decodeBlocks(plaintextReader, header.protectedStreamKey)
+	return decodeBlocks(bytes.NewReader(b), header.protectedStreamKey)
 }
