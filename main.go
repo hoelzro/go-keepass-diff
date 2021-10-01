@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"runtime"
@@ -104,6 +105,13 @@ func main() {
 		log.Fatal(err)
 	}
 
+	if err := diff(f1, f2, firstFilename, secondFilename, password, os.Stdout); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func diff(f1, f2 io.Reader, firstFilename, secondFilename, password string, w io.Writer) error {
 	var dbOne *KeePassFile
 	var errOne error
 
@@ -127,33 +135,33 @@ func main() {
 	wg.Wait()
 
 	if errOne != nil {
-		log.Fatal(errOne)
+		return errOne
 	}
 
 	if errTwo != nil {
-		log.Fatal(errTwo)
+		return errTwo
 	}
 
 	// XXX detect entry rename/move to different group
 	//     leverage history for ↑ (leverage history in general)
 	oneGroups, err := flattenGroups(dbOne)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	twoGroups, err := flattenGroups(dbTwo)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	for groupName := range oneGroups {
 		if _, present := twoGroups[groupName]; !present {
-			fmt.Printf("Group %s exists in %s, but not %s\n", groupName, firstFilename, secondFilename)
+			fmt.Fprintf(w, "Group %s exists in %s, but not %s\n", groupName, firstFilename, secondFilename)
 		}
 	}
 
 	for groupName := range twoGroups {
 		if _, present := oneGroups[groupName]; !present {
-			fmt.Printf("Group %s exists in %s, but not %s\n", groupName, secondFilename, firstFilename)
+			fmt.Fprintf(w, "Group %s exists in %s, but not %s\n", groupName, secondFilename, firstFilename)
 		}
 	}
 
@@ -225,11 +233,13 @@ func main() {
 
 			if msg != "" {
 				if !groupPrinted {
-					fmt.Println(groupName)
+					fmt.Fprintln(w, groupName)
 					groupPrinted = true
 				}
-				fmt.Println("  " + msg)
+				fmt.Fprintln(w, "  "+msg)
 			}
 		}
 	}
+
+	return nil
 }
