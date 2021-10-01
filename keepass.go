@@ -288,6 +288,9 @@ func checkFirstBlock(r io.Reader, header *keepassDatabaseHeader, decrypt cipher.
 	return nil
 }
 
+// z32 is run of 32 zero bytes
+var z32 = make([]byte, 32)
+
 func decodeBlocks(r io.Reader, protectedStreamKey []byte) (*KeePassFile, error) {
 	var result *KeePassFile
 
@@ -322,7 +325,7 @@ func decodeBlocks(r io.Reader, protectedStreamKey []byte) (*KeePassFile, error) 
 		}
 
 		if blockSize == 0 {
-			if !bytes.Equal(blockHash, []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}) {
+			if !bytes.Equal(blockHash, z32) {
 				return nil, errors.New("invalid hash of final block")
 			}
 			break
