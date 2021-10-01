@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/base64"
 	"encoding/xml"
+
+	"golang.org/x/crypto/salsa20"
 )
 
 func (entry *KeePassEntry) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
@@ -40,12 +42,7 @@ func (entry *KeePassEntry) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 					if err != nil {
 						panic(err.Error())
 					}
-					cipherMaskBytes := make([]byte, len(rawBytes))
-					_, _ = entry.cipherStream.Read(cipherMaskBytes)
-					for i := range rawBytes {
-						rawBytes[i] ^= cipherMaskBytes[i]
-					}
-
+					salsa20.XORKeyStream(rawBytes, rawBytes, KeepassIV, &entry.key)
 					pair.Value.Value = string(rawBytes)
 					pair.Value.Protected = false
 				}
@@ -110,14 +107,14 @@ func (group *KeePassGroup) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 					return err
 				}
 			case "Group":
-				subgroup := KeePassGroup{cipherStream: group.cipherStream}
+				subgroup := KeePassGroup{key: group.key}
 				err := d.DecodeElement(&subgroup, &t)
 				if err != nil {
 					return err
 				}
 				group.Groups = append(group.Groups, subgroup)
 			case "Entry":
-				entry := KeePassEntry{cipherStream: group.cipherStream}
+				entry := KeePassEntry{key: group.key}
 				err := d.DecodeElement(&entry, &t)
 				if err != nil {
 					return err
