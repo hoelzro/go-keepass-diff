@@ -11,6 +11,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"golang.org/x/crypto/ssh/terminal"
 )
 
 type entry struct {
@@ -100,12 +102,13 @@ func main() {
 	}
 	defer f2.Close()
 
-	password, err := readPassword("Password for " + firstFilename + ": ")
+	fmt.Print("Password for " + firstFilename + ": ")
+	password, err := terminal.ReadPassword(int(os.Stdin.Fd()))
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	if err := diff(f1, f2, firstFilename, secondFilename, password, os.Stdout); err != nil {
+	if err := diff(f1, f2, firstFilename, secondFilename, string(password), os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
