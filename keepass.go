@@ -23,7 +23,7 @@ const (
 	FileVersion3            = 0x00030000
 
 	EndOfHeader         = 0
-	Comment             = 1
+	Comment             = 1 // nolint:deadcode
 	CipherID            = 2
 	CompressionFlags    = 3
 	MasterSeed          = 4
@@ -33,14 +33,14 @@ const (
 	ProtectedStreamKey  = 8
 	StreamStartBytes    = 9
 	InnerRandomStreamID = 10
-	KdfParameters       = 11
-	PublicCustomData    = 12
+	KdfParameters       = 11 // nolint:deadcode
+	PublicCustomData    = 12 // nolint:deadcode
 
 	CompressionAlgorithmGzip = 1
 
-	StreamAlgorithmArcFourVariant = 1
+	StreamAlgorithmArcFourVariant = 1 // nolint:deadcode
 	StreamAlgorithmSalsa20        = 2
-	StreamAlgorithmChaCha20       = 3
+	StreamAlgorithmChaCha20       = 3 // nolint:deadcode
 )
 
 var CipherAES256 []byte = []byte{0x31, 0xc1, 0xf2, 0xe6, 0xbf, 0x71, 0x43, 0x50, 0xbe, 0x58, 0x05, 0x21, 0x6a, 0xfc, 0x5a, 0xff}
