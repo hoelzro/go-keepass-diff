@@ -41,7 +41,7 @@ func BenchmarkDiff(b *testing.B) {
 	var s string
 	for i := 0; i < b.N; i++ {
 		b := &bytes.Buffer{}
-		diff(
+		_ = diff(
 			bytes.NewReader(one),
 			bytes.NewReader(two),
 			"one.kdbx",
