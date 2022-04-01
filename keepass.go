@@ -61,6 +61,9 @@ type rawKeePassEntry struct {
 			Protected bool   `xml:"Protected,attr"`
 		} `xml:"Value"`
 	} `xml:"String"`
+	History struct {
+		Entries []rawKeePassEntry `xml:"Entry"`
+	} `xml:"History"`
 }
 
 // XXX lower case struct name for privacy?
@@ -71,31 +74,10 @@ type KeePassEntry struct {
 	KeyValues map[string]string // XXX member name?
 }
 
-func (e rawKeePassEntry) DecryptPassword(key [32]byte) KeePassEntry {
-	ret := e.KeePassEntry
-
-	ret.KeyValues = make(map[string]string, len(e.RawKeyValues))
-	for _, v := range e.RawKeyValues {
-		if v.Value.Protected {
-			rawBytes, err := base64.StdEncoding.DecodeString(v.Value.Value)
-			if err != nil {
-				panic(err.Error())
-			}
-			salsa20.XORKeyStream(rawBytes, rawBytes, KeepassIV, &key)
-			ret.KeyValues[v.Key] = string(rawBytes)
-			continue
-		}
-
-		ret.KeyValues[v.Key] = v.Value.Value
-	}
-
-	return ret
-}
-
 type rawKeePassGroup struct {
-	KeePassGroup
-	Groups  []rawKeePassGroup `xml:"Group"`
-	Entries []rawKeePassEntry `xml:"Entry"`
+	KeePassGroup                   // XXX why is this here?
+	Groups       []rawKeePassGroup `xml:"Group"`
+	Entries      []rawKeePassEntry `xml:"Entry"`
 }
 
 type KeePassGroup struct {
@@ -105,18 +87,48 @@ type KeePassGroup struct {
 	Entries []KeePassEntry `xml:"Entry"`
 }
 
-func (g rawKeePassGroup) DecryptPasswords(key [32]byte) KeePassGroup {
-	ret := g.KeePassGroup
+func (g rawKeePassGroup) Cook() KeePassGroup {
+	res := KeePassGroup{
+		Name:  g.Name,
+		Notes: g.Notes,
+	}
 
-	for i := range g.Groups {
-		ret.Groups = append(ret.Groups, g.Groups[i].DecryptPasswords(key))
+	groups := make([]KeePassGroup, len(g.Groups))
+	for i, subgroup := range g.Groups {
+		groups[i] = subgroup.Cook()
+	}
+
+	res.Groups = groups
+
+	entries := make([]KeePassEntry, len(g.Entries))
+	for i, entry := range g.Entries {
+		entries[i].Times = entry.Times
+		entries[i].KeyValues = make(map[string]string)
+		for _, rawKV := range entry.RawKeyValues {
+			entries[i].KeyValues[rawKV.Key] = rawKV.Value.Value
+		}
+	}
+
+	res.Entries = entries
+
+	return res
+}
+
+func (g rawKeePassGroup) CollectEntries(accum []*rawKeePassEntry) []*rawKeePassEntry {
+	for _, g := range g.Groups {
+		accum = g.CollectEntries(accum)
 	}
 
 	for i := range g.Entries {
-		ret.Entries = append(ret.Entries, g.Entries[i].DecryptPassword(key))
+		accum = append(accum, &g.Entries[i])
+
+		for j := range g.Entries[i].History.Entries {
+			// XXX assert it doesn't go deeper?
+			accum = append(accum, &g.Entries[i].History.Entries[j])
+		}
 	}
 
-	return ret
+	return accum
 }
 
 type rawKeePassFile struct {
@@ -407,7 +419,39 @@ func decodeBlocks(r io.Reader, protectedStreamKey []byte) (*KeePassFile, error) 
 		}
 
 		result = &KeePassFile{}
-		result.Root.Group = keepassFile.Root.Group.DecryptPasswords(sha256.Sum256(protectedStreamKey))
+		entries := keepassFile.Root.Group.CollectEntries(nil)
+		protectedBytes := make([]byte, 0)
+		for _, e := range entries {
+			for _, v := range e.RawKeyValues {
+				if v.Value.Protected {
+					rawBytes, err := base64.StdEncoding.DecodeString(v.Value.Value)
+					if err != nil {
+						panic(err.Error())
+					}
+					protectedBytes = append(protectedBytes, rawBytes...)
+				}
+			}
+		}
+
+		decryptedProtectedBytes := make([]byte, len(protectedBytes))
+		key := sha256.Sum256(protectedStreamKey)
+		salsa20.XORKeyStream(decryptedProtectedBytes, protectedBytes, KeepassIV, &key)
+
+		for ei := range entries {
+			for kvi := range entries[ei].RawKeyValues {
+				if entries[ei].RawKeyValues[kvi].Value.Protected {
+					rawBytes, err := base64.StdEncoding.DecodeString(entries[ei].RawKeyValues[kvi].Value.Value)
+					if err != nil {
+						panic(err.Error())
+					}
+					decryptedValue := decryptedProtectedBytes[:len(rawBytes)]
+					decryptedProtectedBytes = decryptedProtectedBytes[len(rawBytes):]
+					entries[ei].RawKeyValues[kvi].Value.Value = string(decryptedValue)
+				}
+			}
+		}
+
+		result.Root.Group = keepassFile.Root.Group.Cook()
 	}
 
 	return result, nil

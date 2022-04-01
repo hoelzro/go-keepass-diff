@@ -1,4 +1,3 @@
 Test
   Entry 'one' has two different passwords (one.kdbx is newer)
-  Entry 'three' has two different passwords (two.kdbx is newer)
   Entry 'two' exists in one.kdbx, but not two.kdbx
