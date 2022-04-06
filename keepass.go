@@ -52,32 +52,12 @@ type KeePassTimes struct {
 	LastModificationTime string `xml:"LastModificationTime"`
 }
 
-type rawKeePassEntry struct {
-	KeePassEntry
-	RawKeyValues []struct {
-		Key   string `xml:"Key"`
-		Value struct {
-			Value     string `xml:",chardata"`
-			Protected bool   `xml:"Protected,attr"`
-		} `xml:"Value"`
-	} `xml:"String"`
-	History struct {
-		Entries []rawKeePassEntry `xml:"Entry"`
-	} `xml:"History"`
-}
-
 // XXX lower case struct name for privacy?
 //     demarshal modification times/history/recycle bin for easier merging?
 type KeePassEntry struct {
-	Times KeePassTimes
-	// KeyValues get populated by DecryptPassword
+	Times     KeePassTimes
 	KeyValues map[string]string // XXX member name?
-}
-
-type rawKeePassGroup struct {
-	KeePassGroup                   // XXX why is this here?
-	Groups       []rawKeePassGroup `xml:"Group"`
-	Entries      []rawKeePassEntry `xml:"Entry"`
+	History   []KeePassEntry
 }
 
 type KeePassGroup struct {
@@ -85,56 +65,6 @@ type KeePassGroup struct {
 	Notes   string         `xml:"Notes"`
 	Groups  []KeePassGroup `xml:"Group"`
 	Entries []KeePassEntry `xml:"Entry"`
-}
-
-func (g rawKeePassGroup) Cook() KeePassGroup {
-	res := KeePassGroup{
-		Name:  g.Name,
-		Notes: g.Notes,
-	}
-
-	groups := make([]KeePassGroup, len(g.Groups))
-	for i, subgroup := range g.Groups {
-		groups[i] = subgroup.Cook()
-	}
-
-	res.Groups = groups
-
-	entries := make([]KeePassEntry, len(g.Entries))
-	for i, entry := range g.Entries {
-		entries[i].Times = entry.Times
-		entries[i].KeyValues = make(map[string]string)
-		for _, rawKV := range entry.RawKeyValues {
-			entries[i].KeyValues[rawKV.Key] = rawKV.Value.Value
-		}
-	}
-
-	res.Entries = entries
-
-	return res
-}
-
-func (g rawKeePassGroup) CollectEntries(accum []*rawKeePassEntry) []*rawKeePassEntry {
-	for _, g := range g.Groups {
-		accum = g.CollectEntries(accum)
-	}
-
-	for i := range g.Entries {
-		accum = append(accum, &g.Entries[i])
-
-		for j := range g.Entries[i].History.Entries {
-			// XXX assert it doesn't go deeper?
-			accum = append(accum, &g.Entries[i].History.Entries[j])
-		}
-	}
-
-	return accum
-}
-
-type rawKeePassFile struct {
-	Root struct {
-		Group rawKeePassGroup `xml:"Group"`
-	} `xml:"Root"`
 }
 
 type KeePassFile struct {
@@ -411,47 +341,57 @@ func decodeBlocks(r io.Reader, protectedStreamKey []byte) (*KeePassFile, error) 
 			return nil, err
 		}
 
-		keepassFile := rawKeePassFile{}
+		// set up unmarshaling-specific data to thread a pointer to
+		// this slice throughout the XML unmarshaling process
+		var needsDecryption []protectedValueRef
 
-		err = xml.Unmarshal(uncompressedPayload, &keepassFile)
+		var unmarshalMe struct {
+			Root struct {
+				Groups *groupUnmarshaler `xml:"Group"`
+			} `xml:"Root"`
+		}
+		unmarshalMe.Root.Groups = &groupUnmarshaler{
+			needsDecryption: &needsDecryption,
+		}
+
+		err = xml.Unmarshal(uncompressedPayload, &unmarshalMe)
 		if err != nil {
 			return nil, err
 		}
 
-		result = &KeePassFile{}
-		entries := keepassFile.Root.Group.CollectEntries(nil)
+		// collect all of the bytes encrypted by the database stream cipher
 		protectedBytes := make([]byte, 0)
-		for _, e := range entries {
-			for _, v := range e.RawKeyValues {
-				if v.Value.Protected {
-					rawBytes, err := base64.StdEncoding.DecodeString(v.Value.Value)
-					if err != nil {
-						panic(err.Error())
-					}
-					protectedBytes = append(protectedBytes, rawBytes...)
-				}
+		for _, ref := range needsDecryption {
+			rawBytes, err := base64.StdEncoding.DecodeString(ref.m[ref.k])
+			if err != nil {
+				panic(err.Error())
 			}
+			protectedBytes = append(protectedBytes, rawBytes...)
 		}
 
+		// ↔decrypt those protected bytes
 		decryptedProtectedBytes := make([]byte, len(protectedBytes))
 		key := sha256.Sum256(protectedStreamKey)
 		salsa20.XORKeyStream(decryptedProtectedBytes, protectedBytes, KeepassIV, &key)
 
-		for ei := range entries {
-			for kvi := range entries[ei].RawKeyValues {
-				if entries[ei].RawKeyValues[kvi].Value.Protected {
-					rawBytes, err := base64.StdEncoding.DecodeString(entries[ei].RawKeyValues[kvi].Value.Value)
-					if err != nil {
-						panic(err.Error())
-					}
-					decryptedValue := decryptedProtectedBytes[:len(rawBytes)]
-					decryptedProtectedBytes = decryptedProtectedBytes[len(rawBytes):]
-					entries[ei].RawKeyValues[kvi].Value.Value = string(decryptedValue)
-				}
+		// …and update the references with the decrypted strings
+		for _, ref := range needsDecryption {
+			rawBytes, err := base64.StdEncoding.DecodeString(ref.m[ref.k])
+			if err != nil {
+				panic(err.Error())
 			}
+			decryptedValue := decryptedProtectedBytes[:len(rawBytes)]
+			decryptedProtectedBytes = decryptedProtectedBytes[len(rawBytes):]
+			ref.m[ref.k] = string(decryptedValue)
 		}
 
-		result.Root.Group = keepassFile.Root.Group.Cook()
+		// XXX assert there's exactly 1?
+		rootGroup := unmarshalMe.Root.Groups.KeePassGroup
+
+		result = &KeePassFile{}
+		result.Root.Group = *rootGroup
+
+		return result, nil
 	}
 
 	return result, nil
