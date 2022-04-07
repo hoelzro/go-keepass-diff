@@ -390,8 +390,6 @@ func decodeBlocks(r io.Reader, protectedStreamKey []byte) (*KeePassFile, error) 
 
 		result = &KeePassFile{}
 		result.Root.Group = *rootGroup
-
-		return result, nil
 	}
 
 	return result, nil
