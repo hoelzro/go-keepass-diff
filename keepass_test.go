@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	_ "embed"
+	"fmt"
+	"os"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -14,24 +16,55 @@ var one []byte
 //go:embed two.kdbx
 var two []byte
 
-//go:embed expected.txt
-var expected string
+type diffTest struct {
+	left           string
+	right          string
+	expectedOutput string
+}
+
+var tests = []diffTest{
+	{left: "one.kdbx", right: "two.kdbx", expectedOutput: "expected.txt"},
+}
 
 func TestDiff(t *testing.T) {
-	b := &bytes.Buffer{}
-	if err := diff(
-		bytes.NewReader(one),
-		bytes.NewReader(two),
-		"one.kdbx",
-		"two.kdbx",
-		"abc123",
-		b,
-	); err != nil {
-		t.Fatal(err)
-	}
+	for _, test := range tests {
+		t.Run(fmt.Sprintf("comparing %s and %s", test.left, test.right), func(t *testing.T) {
+			b := &bytes.Buffer{}
 
-	if diff := cmp.Diff(expected, b.String()); diff != "" {
-		t.Errorf("diff is wrong: %s", diff)
+			leftFile, err := os.Open(test.left)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			defer leftFile.Close()
+
+			rightFile, err := os.Open(test.right)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			defer rightFile.Close()
+
+			if err := diff(
+				leftFile,
+				rightFile,
+				test.left,
+				test.right,
+				"abc123",
+				b,
+			); err != nil {
+				t.Fatal(err)
+			}
+
+			expected, err := os.ReadFile(test.expectedOutput)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if diff := cmp.Diff(string(expected), b.String()); diff != "" {
+				t.Errorf("diff is wrong: %s", diff)
+			}
+		})
 	}
 }
 
