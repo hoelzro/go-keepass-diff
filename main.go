@@ -102,11 +102,12 @@ func main() {
 	}
 	defer f2.Close()
 
-	fmt.Print("Password for " + firstFilename + ": ")
+	fmt.Fprint(os.Stderr, "Password for "+firstFilename+": ")
 	password, err := term.ReadPassword(int(os.Stdin.Fd()))
 	if err != nil {
 		log.Fatal(err)
 	}
+	fmt.Fprint(os.Stderr, "\n")
 
 	if err := diff(f1, f2, firstFilename, secondFilename, string(password), os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, err)
