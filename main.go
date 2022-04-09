@@ -233,6 +233,8 @@ func diff(f1, f2 io.Reader, firstFilename, secondFilename, password string, w io
 				msg = fmt.Sprintf("Entry '%s' has two different passwords (%s is newer)", name, newer)
 			} else if entryOne.notes != entryTwo.notes {
 				msg = fmt.Sprintf("Entry '%s' has two different notes (%s is newer)", name, newer)
+			} else if !entryOne.modificationTime.Equal(entryTwo.modificationTime) {
+				msg = fmt.Sprintf("Entry '%s' looks the same, but has two different modification times (%s is newer)", name, newer)
 			}
 
 			if msg != "" {
