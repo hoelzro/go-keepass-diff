@@ -24,6 +24,8 @@ type diffTest struct {
 
 var tests = []diffTest{
 	{left: "one.kdbx", right: "two.kdbx", expectedOutput: "expected.txt"},
+	// this file also tests that entries in the root group are diffed
+	{left: "mod-time-only-before.kdbx", right: "mod-time-only-after.kdbx", expectedOutput: "mod-time-only-expected.txt"},
 }
 
 func TestDiff(t *testing.T) {
