@@ -9,6 +9,7 @@ import (
 	"os"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,11 +24,18 @@ type entry struct {
 	modificationTime time.Time
 }
 
-func flattenGroupsHelper(group *KeePassGroup, groupMap map[string][]entry, prefix string) error {
-	fullGroupName := prefix + group.Name
+func flattenGroupsHelper(group *KeePassGroup, groupMap map[string][]entry, path []string) error {
+	path = append(path, group.Name)
+	fullGroupName := strings.Join(path[1:], "/")
 
 	for _, child := range group.Groups {
-		err := flattenGroupsHelper(&child, groupMap, fullGroupName+"/")
+		// omit the Backup group at the top, if it exists (I think it might be
+		// a holdover from earlier file formats)
+		if len(path) == 1 && child.Name == "Backup" {
+			continue
+		}
+
+		err := flattenGroupsHelper(&child, groupMap, path)
 		if err != nil {
 			return err
 		}
@@ -62,16 +70,9 @@ func flattenGroupsHelper(group *KeePassGroup, groupMap map[string][]entry, prefi
 
 func flattenGroups(k *KeePassFile) (map[string][]entry, error) {
 	groups := make(map[string][]entry)
-	// XXX assert that len(k.Root.Group.Entries) == 0?
-	for _, g := range k.Root.Group.Groups {
-		if g.Name == "Backup" {
-			continue
-		}
-
-		err := flattenGroupsHelper(&g, groups, "")
-		if err != nil {
-			return nil, err
-		}
+	err := flattenGroupsHelper(&k.Root.Group, groups, make([]string, 0, 10))
+	if err != nil {
+		return nil, err
 	}
 
 	return groups, nil
