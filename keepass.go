@@ -11,7 +11,6 @@ import (
 	"encoding/xml"
 	"errors"
 	"io"
-	"io/ioutil"
 
 	"golang.org/x/crypto/salsa20"
 )
@@ -336,7 +335,7 @@ func decodeBlocks(r io.Reader, protectedStreamKey []byte) (*KeePassFile, error) 
 			return nil, err
 		}
 
-		uncompressedPayload, err := ioutil.ReadAll(gzipReader)
+		uncompressedPayload, err := io.ReadAll(gzipReader)
 		if err != nil {
 			return nil, err
 		}
@@ -423,7 +422,7 @@ func decryptDatabase(r io.Reader, password string) (*KeePassFile, error) {
 		return nil, err
 	}
 
-	ciphertext, err := ioutil.ReadAll(r)
+	ciphertext, err := io.ReadAll(r)
 	if err != nil {
 		return nil, err
 	}
