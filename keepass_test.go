@@ -2,19 +2,32 @@ package main
 
 import (
 	"bytes"
-	_ "embed"
+	"embed"
 	"fmt"
-	"os"
+	"io/fs"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 )
 
-//go:embed one.kdbx
+//go:embed testdata/one.kdbx
 var one []byte
 
-//go:embed two.kdbx
+//go:embed testdata/two.kdbx
 var two []byte
+
+var testdata fs.FS
+
+//go:embed testdata
+var _testdata embed.FS
+func init() {
+	var err error
+	testdata, err = fs.Sub(_testdata, "testdata")
+	if err != nil {
+		panic("couldn't fs.Sub testdata:" + err.Error())
+	}
+}
+
 
 type diffTest struct {
 	left           string
@@ -33,14 +46,14 @@ func TestDiff(t *testing.T) {
 		t.Run(fmt.Sprintf("comparing %s and %s", test.left, test.right), func(t *testing.T) {
 			b := &bytes.Buffer{}
 
-			leftFile, err := os.Open(test.left)
+			leftFile, err := testdata.Open(test.left)
 			if err != nil {
 				t.Fatal(err)
 			}
 
 			defer leftFile.Close()
 
-			rightFile, err := os.Open(test.right)
+			rightFile, err := testdata.Open(test.right)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -58,7 +71,7 @@ func TestDiff(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			expected, err := os.ReadFile(test.expectedOutput)
+			expected, err := fs.ReadFile(testdata, test.expectedOutput)
 			if err != nil {
 				t.Fatal(err)
 			}
