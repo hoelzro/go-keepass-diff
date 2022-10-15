@@ -21,6 +21,7 @@ type entry struct {
 	username         string
 	notes            string
 	password         string
+	url              string
 	modificationTime time.Time
 }
 
@@ -48,6 +49,7 @@ func flattenGroupsHelper(group *KeePassGroup, groupMap map[string][]entry, path 
 		password := e.KeyValues["Password"]
 		username := e.KeyValues["UserName"]
 		notes := e.KeyValues["Notes"]
+		url := e.KeyValues["URL"]
 
 		// XXX do this parsing in the XML unmarshal?
 		//     if you do, you can remove the error return type on this function
@@ -61,6 +63,7 @@ func flattenGroupsHelper(group *KeePassGroup, groupMap map[string][]entry, path 
 			username:         username,
 			password:         password,
 			notes:            notes,
+			url:              url,
 			modificationTime: lastModificationTime,
 		})
 	}
@@ -230,6 +233,8 @@ func diff(f1, f2 io.Reader, firstFilename, secondFilename, password string, w io
 				msg = fmt.Sprintf("Entry '%s' exists in %s, but not %s", name, secondFilename, firstFilename)
 			} else if entryOne.username != entryTwo.username {
 				msg = fmt.Sprintf("Entry '%s' has two different usernames (%s is newer)", name, newer)
+			} else if entryOne.url != entryTwo.url {
+				msg = fmt.Sprintf("Entry '%s' has two different urls (%s is newer)", name, newer)
 			} else if entryOne.password != entryTwo.password {
 				msg = fmt.Sprintf("Entry '%s' has two different passwords (%s is newer)", name, newer)
 			} else if entryOne.notes != entryTwo.notes {
