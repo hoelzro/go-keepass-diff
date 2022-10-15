@@ -17,13 +17,15 @@ import (
 )
 
 type entry struct {
-	name             string
-	username         string
-	notes            string
-	password         string
-	url              string
-	modificationTime time.Time
+	Attributes map[string]string
+	ModificationTime time.Time
 }
+
+func (e entry) name() string { return e.Attributes["Title"] }
+func (e entry) password() string { return e.Attributes["Password"] }
+func (e entry) username() string { return e.Attributes["UserName"] }
+func (e entry) notes() string { return e.Attributes["Notes"] }
+func (e entry) url() string { return e.Attributes["URL"] }
 
 func flattenGroupsHelper(group *KeePassGroup, groupMap map[string][]entry, path []string) error {
 	path = append(path, group.Name)
@@ -45,11 +47,11 @@ func flattenGroupsHelper(group *KeePassGroup, groupMap map[string][]entry, path 
 	groupMap[fullGroupName] = make([]entry, 0, len(group.Entries))
 
 	for _, e := range group.Entries {
-		name := e.KeyValues["Title"]
-		password := e.KeyValues["Password"]
-		username := e.KeyValues["UserName"]
-		notes := e.KeyValues["Notes"]
-		url := e.KeyValues["URL"]
+		// copy e.KeyValues so we can mutate them safely.
+		attributes := make(map[string]string, len(e.KeyValues))
+		for k, v := range e.KeyValues {
+			attributes[k] = v
+		}
 
 		// XXX do this parsing in the XML unmarshal?
 		//     if you do, you can remove the error return type on this function
@@ -59,12 +61,8 @@ func flattenGroupsHelper(group *KeePassGroup, groupMap map[string][]entry, path 
 		}
 
 		groupMap[fullGroupName] = append(groupMap[fullGroupName], entry{
-			name:             name,
-			username:         username,
-			password:         password,
-			notes:            notes,
-			url:              url,
-			modificationTime: lastModificationTime,
+			Attributes: attributes,
+			ModificationTime: lastModificationTime,
 		})
 	}
 
@@ -196,16 +194,16 @@ func diff(f1, f2 io.Reader, firstFilename, secondFilename, password string, w io
 		names := []string{}
 
 		for _, entry := range oneGroupEntries {
-			oneEntriesByName[entry.name] = entry
+			oneEntriesByName[entry.name()] = entry
 
-			names = append(names, entry.name)
+			names = append(names, entry.name())
 		}
 
 		for _, entry := range twoGroupEntries {
-			twoEntriesByName[entry.name] = entry
+			twoEntriesByName[entry.name()] = entry
 
-			if _, present := oneEntriesByName[entry.name]; !present {
-				names = append(names, entry.name)
+			if _, present := oneEntriesByName[entry.name()]; !present {
+				names = append(names, entry.name())
 			}
 		}
 
@@ -220,7 +218,7 @@ func diff(f1, f2 io.Reader, firstFilename, secondFilename, password string, w io
 			var newer string
 
 			if presentOne && presentTwo {
-				if entryOne.modificationTime.After(entryTwo.modificationTime) {
+				if entryOne.ModificationTime.After(entryTwo.ModificationTime) {
 					newer = firstFilename
 				} else {
 					newer = secondFilename
@@ -231,15 +229,15 @@ func diff(f1, f2 io.Reader, firstFilename, secondFilename, password string, w io
 				msg = fmt.Sprintf("Entry '%s' exists in %s, but not %s", name, firstFilename, secondFilename)
 			} else if presentTwo && !presentOne {
 				msg = fmt.Sprintf("Entry '%s' exists in %s, but not %s", name, secondFilename, firstFilename)
-			} else if entryOne.username != entryTwo.username {
+			} else if entryOne.username() != entryTwo.username() {
 				msg = fmt.Sprintf("Entry '%s' has two different usernames (%s is newer)", name, newer)
-			} else if entryOne.url != entryTwo.url {
+			} else if entryOne.url() != entryTwo.url() {
 				msg = fmt.Sprintf("Entry '%s' has two different urls (%s is newer)", name, newer)
-			} else if entryOne.password != entryTwo.password {
+			} else if entryOne.password() != entryTwo.password() {
 				msg = fmt.Sprintf("Entry '%s' has two different passwords (%s is newer)", name, newer)
-			} else if entryOne.notes != entryTwo.notes {
+			} else if entryOne.notes() != entryTwo.notes() {
 				msg = fmt.Sprintf("Entry '%s' has two different notes (%s is newer)", name, newer)
-			} else if !entryOne.modificationTime.Equal(entryTwo.modificationTime) {
+			} else if !entryOne.ModificationTime.Equal(entryTwo.ModificationTime) {
 				msg = fmt.Sprintf("Entry '%s' looks the same, but has two different modification times (%s is newer)", name, newer)
 			}
 
