@@ -139,8 +139,7 @@ headerLoop:
 		}
 
 		fieldData := make([]byte, fieldLength)
-		_, err = r.Read(fieldData)
-		// XXX length checks?
+		_, err = io.ReadFull(r, fieldData)
 		if err != nil {
 			return nil, err
 		}
@@ -272,8 +271,7 @@ func makeMasterKey(header *keepassDatabaseHeader, password string) ([]byte, erro
 
 func checkFirstBlock(r io.Reader, header *keepassDatabaseHeader, decrypt cipher.BlockMode) error {
 	firstCipherBlock := make([]byte, len(header.streamStartBytes))
-	// XXX length check?
-	_, err := r.Read(firstCipherBlock)
+	_, err := io.ReadFull(r, firstCipherBlock)
 	if err != nil {
 		return err
 	}
@@ -305,8 +303,7 @@ func decodeBlocks(r io.Reader, protectedStreamKey []byte) (*KeePassFile, error) 
 		}
 
 		blockHash := make([]byte, 32)
-		// XXX is short read communicated as an error?
-		_, err = r.Read(blockHash)
+		_, err = io.ReadFull(r, blockHash)
 		if err != nil {
 			return nil, err
 		}
