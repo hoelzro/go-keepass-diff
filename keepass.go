@@ -52,7 +52,8 @@ type KeePassTimes struct {
 }
 
 // XXX lower case struct name for privacy?
-//     demarshal modification times/history/recycle bin for easier merging?
+//
+//	demarshal modification times/history/recycle bin for easier merging?
 type KeePassEntry struct {
 	Times     KeePassTimes
 	KeyValues map[string]string // XXX member name?
