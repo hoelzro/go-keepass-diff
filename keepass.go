@@ -73,7 +73,7 @@ type KeePassFile struct {
 	} `xml:"Root"`
 }
 
-func checkMagicSignature(r io.Reader) error {
+func checkMagicSignature(r io.Reader) (keepassDecryptor, error) {
 	var magic struct {
 		Signature1 uint32
 		Signature2 uint32
@@ -82,24 +82,24 @@ func checkMagicSignature(r io.Reader) error {
 
 	err := binary.Read(r, binary.LittleEndian, &magic)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if magic.Signature1 != Signature1 {
-		return errors.New("signature mismatch")
+		return nil, errors.New("signature mismatch")
 	}
 
 	if magic.Signature2 != Signature2 {
-		return errors.New("signature mismatch")
+		return nil, errors.New("signature mismatch")
 	}
 
 	magic.Version &= FileVersionCriticalMask
 
 	if magic.Version != FileVersion3 {
-		return errors.New("version mismatch")
+		return nil, errors.New("version mismatch")
 	}
 
-	return nil
+	return &keepassV3Decryptor{}, nil
 }
 
 type keepassDatabaseHeader struct {
@@ -392,12 +392,13 @@ func decodeBlocks(r io.Reader, protectedStreamKey []byte) (*KeePassFile, error) 
 	return result, nil
 }
 
-func decryptDatabase(r io.Reader, password string) (*KeePassFile, error) {
-	err := checkMagicSignature(r)
-	if err != nil {
-		return nil, err
-	}
+type keepassDecryptor interface {
+	Decrypt(r io.Reader, password string) (*KeePassFile, error)
+}
 
+type keepassV3Decryptor struct{}
+
+func (v3 *keepassV3Decryptor) Decrypt(r io.Reader, password string) (*KeePassFile, error) {
 	header, err := readDatabaseHeader(r)
 	if err != nil {
 		return nil, err
@@ -431,4 +432,13 @@ func decryptDatabase(r io.Reader, password string) (*KeePassFile, error) {
 	plaintextReader := bytes.NewReader(plaintext)
 
 	return decodeBlocks(plaintextReader, header.protectedStreamKey)
+}
+
+func decryptDatabase(r io.Reader, password string) (*KeePassFile, error) {
+	decryptor, err := checkMagicSignature(r)
+	if err != nil {
+		return nil, err
+	}
+
+	return decryptor.Decrypt(r, password)
 }
