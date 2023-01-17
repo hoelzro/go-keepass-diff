@@ -39,6 +39,8 @@ var tests = []diffTest{
 	{left: "one.kdbx", right: "two.kdbx", expectedOutput: "expected.txt"},
 	// this file also tests that entries in the root group are diffed
 	{left: "mod-time-only-before.kdbx", right: "mod-time-only-after.kdbx", expectedOutput: "mod-time-only-expected.txt"},
+	{left: "onev4.kdbx", right: "twov4.kdbx", expectedOutput: "expected.txt"},
+	// XXX one.kdbx and twov4.kdbx too
 }
 
 func TestDiff(t *testing.T) {
