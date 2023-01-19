@@ -14,6 +14,7 @@ import (
 	"errors"
 	"io"
 
+	"github.com/google/uuid"
 	"golang.org/x/crypto/chacha20"
 )
 
@@ -35,6 +36,8 @@ const (
 	InnerHeaderFieldIDStreamKey = 2
 	InnerHeaderFieldIDBinary    = 3
 )
+
+var KdfUUIDAes = uuid.Must(uuid.Parse("c9d9f39a-628a-4460-bf74-0d08c18a4fea"))
 
 type keepassV4Decryptor struct{}
 
@@ -344,8 +347,15 @@ headerLoop:
 		}
 	}
 
-	// XXX assert the KDF UUID is not argon2
-	// kdfUUID := kdfParameters["$UUID"].([]byte)
+	kdfUUIDBytes := kdfParameters["$UUID"].([]byte)
+	kdfUUID, err := uuid.FromBytes(kdfUUIDBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	if kdfUUID != KdfUUIDAes {
+		return nil, errors.New("unknown/unsupported KDF")
+	}
 
 	if masterSeed == nil {
 		return nil, errors.New("master seed field not found")

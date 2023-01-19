@@ -8,4 +8,7 @@ require (
 	golang.org/x/term v0.0.0-20201126162022-7de9c90e9dd1
 )
 
-require golang.org/x/sys v0.0.0-20210927094055-39ccf1dd6fa6 // indirect
+require (
+	github.com/google/uuid v1.3.0 // indirect
+	golang.org/x/sys v0.0.0-20210927094055-39ccf1dd6fa6 // indirect
+)
