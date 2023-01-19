@@ -185,13 +185,13 @@ func readV4Blocks(r io.Reader, hmacKey []byte) ([]byte, error) {
 		}
 
 		transform := sha512.New()
-		binary.Write(transform, binary.LittleEndian, blockIndex)
+		_ = binary.Write(transform, binary.LittleEndian, blockIndex)
 		transform.Write(hmacKey)
 		currentHMACKey := transform.Sum(nil)
 
 		h := hmac.New(sha256.New, currentHMACKey)
-		binary.Write(h, binary.LittleEndian, blockIndex)
-		binary.Write(h, binary.LittleEndian, blockSize)
+		_ = binary.Write(h, binary.LittleEndian, blockIndex)
+		_ = binary.Write(h, binary.LittleEndian, blockSize)
 		h.Write(blockData)
 
 		if !hmac.Equal(h.Sum(nil), blockHMAC) {
