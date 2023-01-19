@@ -267,11 +267,7 @@ func makeMasterKey(header *keepassDatabaseHeader, password string) ([]byte, erro
 		aesCipher.Encrypt(transformedKey[16:32], transformedKey[16:32])
 	}
 	transformedKey = sha256.Sum256(transformedKey[:])
-
-	h := sha256.New()
-	h.Write(header.masterSeed)
-	h.Write(transformedKey[:])
-	return h.Sum(nil), nil
+	return transformedKey[:], nil
 }
 
 func checkFirstBlock(r io.Reader, header *keepassDatabaseHeader, decrypt cipher.BlockMode) error {
@@ -412,6 +408,11 @@ func (v3 *keepassV3Decryptor) Decrypt(r io.Reader, password string) (*KeePassFil
 	if err != nil {
 		return nil, err
 	}
+
+	h := sha256.New()
+	h.Write(header.masterSeed)
+	h.Write(masterKey)
+	masterKey = h.Sum(nil)
 
 	aesCipher, err := aes.NewCipher(masterKey)
 	if err != nil {
