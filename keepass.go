@@ -20,6 +20,7 @@ const (
 	Signature2              = 0xB54BFB67
 	FileVersionCriticalMask = 0xFFFF0000
 	FileVersion3            = 0x00030000
+	FileVersion4            = 0x00040000
 
 	EndOfHeader         = 0
 	Comment             = 1 // nolint:deadcode
@@ -95,11 +96,14 @@ func checkMagicSignature(r io.Reader) (keepassDecryptor, error) {
 
 	magic.Version &= FileVersionCriticalMask
 
-	if magic.Version != FileVersion3 {
+	switch magic.Version {
+	case FileVersion3:
+		return &keepassV3Decryptor{}, nil
+	case FileVersion4:
+		return &keepassV4Decryptor{}, nil
+	default:
 		return nil, errors.New("version mismatch")
 	}
-
-	return &keepassV3Decryptor{}, nil
 }
 
 type keepassDatabaseHeader struct {
