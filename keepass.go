@@ -366,7 +366,7 @@ func decodeBlocks(r io.Reader, protectedStreamKey []byte) (*KeePassFile, error) 
 			protectedBytes = append(protectedBytes, rawBytes...)
 		}
 
-		// ↔decrypt those protected bytes
+		// …decrypt those protected bytes
 		decryptedProtectedBytes := make([]byte, len(protectedBytes))
 		key := sha256.Sum256(protectedStreamKey)
 		salsa20.XORKeyStream(decryptedProtectedBytes, protectedBytes, KeepassIV, &key)
