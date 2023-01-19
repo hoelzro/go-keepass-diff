@@ -414,7 +414,12 @@ func (v4 *keepassV4Decryptor) Decrypt(r io.Reader, password string) (*KeePassFil
 	}
 
 	uncompressedPayload, err := ioutil.ReadAll(gzipReader)
-	if err != nil && err != io.ErrUnexpectedEOF {
+	// because the gzip'd XML is encrypted using a block cipher, it had to be padded up to the cipher's
+	// block size - so there might be extra junk after the full gzip'd contents, which surfaces as a
+	// gzip.ErrHeader.  It would be great to detect how *much* junk there is and be more precise in our
+	// handling, but for now just ignore gzip.ErrHeader and rely on XML parsing to catch "real" gzip
+	// errors
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, gzip.ErrHeader) {
 		return nil, err
 	}
 
