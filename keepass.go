@@ -42,6 +42,8 @@ const (
 	StreamAlgorithmArcFourVariant = 1 // nolint:deadcode
 	StreamAlgorithmSalsa20        = 2
 	StreamAlgorithmChaCha20       = 3 // nolint:deadcode
+
+	SecondsBetweenEpochAndYearZero = int64(-62135596800)
 )
 
 var CipherAES256 []byte = []byte{0x31, 0xc1, 0xf2, 0xe6, 0xbf, 0x71, 0x43, 0x50, 0xbe, 0x58, 0x05, 0x21, 0x6a, 0xfc, 0x5a, 0xff}
@@ -65,8 +67,7 @@ func (times *KeePassTimes) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 	var lastModificationTime time.Time
 	if lastModificationTimeBytes, err := base64.StdEncoding.DecodeString(unmarshalTimes.LastModificationTime); err == nil {
 		// try base-64 encoded time…
-		yearZero := time.Date(0, 1, 1, 0, 0, 0, 0, time.UTC)
-		lastModificationTime = time.Unix(int64(binary.LittleEndian.Uint64(lastModificationTimeBytes))+yearZero.Unix(), 0)
+		lastModificationTime = time.Unix(int64(binary.LittleEndian.Uint64(lastModificationTimeBytes))+SecondsBetweenEpochAndYearZero, 0)
 	} else {
 		// … fall back to time as-is
 		lastModificationTime, err = time.Parse("2006-01-02T15:04:05Z", unmarshalTimes.LastModificationTime)
