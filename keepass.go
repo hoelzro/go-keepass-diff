@@ -115,7 +115,7 @@ type keepassDatabaseHeader struct {
 	rounds             uint64
 }
 
-func readDatabaseHeader(r io.Reader) (*keepassDatabaseHeader, error) {
+func (v3 *keepassV3Decryptor) readDatabaseHeader(r io.Reader) (*keepassDatabaseHeader, error) {
 	var masterSeed []byte
 	var transformSeed []byte
 	var encryptionIV []byte
@@ -399,7 +399,7 @@ type keepassDecryptor interface {
 type keepassV3Decryptor struct{}
 
 func (v3 *keepassV3Decryptor) Decrypt(r io.Reader, password string) (*KeePassFile, error) {
-	header, err := readDatabaseHeader(r)
+	header, err := v3.readDatabaseHeader(r)
 	if err != nil {
 		return nil, err
 	}
