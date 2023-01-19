@@ -266,7 +266,7 @@ headerLoop:
 		var fieldID uint8
 		err := binary.Read(r, binary.LittleEndian, &fieldID)
 		if err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				break
 			}
 
