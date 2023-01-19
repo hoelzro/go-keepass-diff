@@ -2,12 +2,20 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/sha512"
+	"encoding/base64"
 	"encoding/binary"
+	"encoding/xml"
 	"errors"
 	"io"
+	"io/ioutil"
+
+	"golang.org/x/crypto/chacha20"
 )
 
 const (
@@ -22,6 +30,11 @@ const (
 	VariantMapFieldTypeInt64     = 0x0d
 	VariantMapFieldTypeString    = 0x18
 	VariantMapFieldTypeByteArray = 0x42
+
+	InnerHeaderFieldIDEnd       = 0
+	InnerHeaderFieldIDStreamID  = 1
+	InnerHeaderFieldIDStreamKey = 2
+	InnerHeaderFieldIDBinary    = 3
 )
 
 type keepassV4Decryptor struct{}
@@ -123,6 +136,99 @@ func checkV4Validity(r io.Reader, signatureAndHeader []byte, masterKey, hmacKey 
 	}
 
 	return nil
+}
+
+func readV4Blocks(r io.Reader, hmacKey []byte) ([]byte, error) {
+	blockBytes := bytes.NewBuffer([]byte{})
+
+	for blockIndex := uint64(0); ; blockIndex++ {
+		blockHMAC := make([]byte, 32)
+		_, err := r.Read(blockHMAC)
+		if err != nil {
+			return nil, err
+		}
+		var blockSize int32
+		err = binary.Read(r, binary.LittleEndian, &blockSize)
+		if err != nil {
+			return nil, err
+		}
+
+		blockData := make([]byte, blockSize)
+		if blockSize > 0 { // XXX my old code didn't have this?
+			_, err = r.Read(blockData)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		transform := sha512.New()
+		binary.Write(transform, binary.LittleEndian, blockIndex)
+		transform.Write(hmacKey)
+		currentHMACKey := transform.Sum(nil)
+
+		h := hmac.New(sha256.New, currentHMACKey)
+		binary.Write(h, binary.LittleEndian, blockIndex)
+		binary.Write(h, binary.LittleEndian, blockSize)
+		h.Write(blockData)
+
+		if !hmac.Equal(h.Sum(nil), blockHMAC) {
+			return nil, errors.New("block HMAC mismatch")
+		}
+
+		blockBytes.Write(blockData)
+
+		if blockSize == 0 {
+			break
+		}
+	}
+
+	return blockBytes.Bytes(), nil
+}
+
+func readV4InnerHeaders(r io.Reader) ([]byte, error) {
+	var streamKey []byte
+
+innerHeaderLoop:
+	for {
+		var fieldID uint8
+
+		err := binary.Read(r, binary.LittleEndian, &fieldID)
+		if err != nil {
+			return nil, err
+		}
+
+		var fieldLength uint32
+		err = binary.Read(r, binary.LittleEndian, &fieldLength)
+		if err != nil {
+			return nil, err
+		}
+
+		fieldData := make([]byte, fieldLength)
+		err = binary.Read(r, binary.LittleEndian, fieldData)
+		if err != nil {
+			return nil, err
+		}
+
+		switch fieldID {
+		case InnerHeaderFieldIDEnd:
+			break innerHeaderLoop
+		case InnerHeaderFieldIDStreamID:
+			streamID := binary.LittleEndian.Uint32(fieldData)
+			if streamID != StreamAlgorithmChaCha20 {
+				return nil, errors.New("ChaCha20 required for KDBX4")
+			}
+		case InnerHeaderFieldIDStreamKey:
+			streamKey = fieldData
+		case InnerHeaderFieldIDBinary:
+			return nil, errors.New("inner header field binary not yet implemented")
+		}
+	}
+
+	if streamKey == nil {
+		return nil, errors.New("No stream key found in inner headers")
+	}
+
+	return streamKey, nil
 }
 
 // XXX this is nearly identical to keepassV3Decryptor.readDatabaseHeader :(
@@ -277,5 +383,95 @@ func (v4 *keepassV4Decryptor) Decrypt(r io.Reader, password string) (*KeePassFil
 		return nil, err
 	}
 
-	panic("NYI")
+	blockBytes, err := readV4Blocks(r, hmacKey)
+	if err != nil {
+		return nil, err
+	}
+
+	h := sha256.New()
+	h.Write(header.masterSeed)
+	h.Write(masterKey)
+
+	masterKey = h.Sum(nil)
+
+	aesCipher, err := aes.NewCipher(masterKey)
+	if err != nil {
+		return nil, err
+	}
+
+	decrypt := cipher.NewCBCDecrypter(aesCipher, header.encryptionIV)
+	plaintext := make([]byte, len(blockBytes))
+	decrypt.CryptBlocks(plaintext, blockBytes)
+
+	gzipReader, err := gzip.NewReader(bytes.NewReader(plaintext))
+	if err != nil {
+		return nil, err
+	}
+
+	streamKey, err := readV4InnerHeaders(gzipReader)
+	if err != nil {
+		return nil, err
+	}
+
+	uncompressedPayload, err := ioutil.ReadAll(gzipReader)
+	if err != nil && err != io.ErrUnexpectedEOF {
+		return nil, err
+	}
+
+	actualStreamKey := sha512.Sum512(streamKey)
+	chachaStream, err := chacha20.NewUnauthenticatedCipher(actualStreamKey[:32], actualStreamKey[32:32+12])
+	if err != nil {
+		return nil, err
+	}
+
+	// set up unmarshaling-specific data to thread a pointer to
+	// this slice throughout the XML unmarshaling process
+	var needsDecryption []protectedValueRef
+
+	var unmarshalMe struct {
+		Root struct {
+			Groups *groupUnmarshaler `xml:"Group"`
+		} `xml:"Root"`
+	}
+	unmarshalMe.Root.Groups = &groupUnmarshaler{
+		needsDecryption: &needsDecryption,
+	}
+
+	err = xml.Unmarshal(uncompressedPayload, &unmarshalMe)
+	if err != nil {
+		return nil, err
+	}
+
+	// XXX move this part into common code
+	// collect all of the bytes encrypted by the database stream cipher
+	protectedBytes := make([]byte, 0)
+	for _, ref := range needsDecryption {
+		rawBytes, err := base64.StdEncoding.DecodeString(ref.m[ref.k])
+		if err != nil {
+			panic(err.Error())
+		}
+		protectedBytes = append(protectedBytes, rawBytes...)
+	}
+
+	// …decrypt those protected bytes
+	decryptedProtectedBytes := make([]byte, len(protectedBytes))
+	chachaStream.XORKeyStream(decryptedProtectedBytes, protectedBytes)
+
+	// …and update the references with the decrypted strings
+	for _, ref := range needsDecryption {
+		rawBytes, err := base64.StdEncoding.DecodeString(ref.m[ref.k])
+		if err != nil {
+			panic(err.Error())
+		}
+		decryptedValue := decryptedProtectedBytes[:len(rawBytes)]
+		decryptedProtectedBytes = decryptedProtectedBytes[len(rawBytes):]
+		ref.m[ref.k] = string(decryptedValue)
+	}
+
+	// XXX assert there's exactly 1?
+	rootGroup := unmarshalMe.Root.Groups.KeePassGroup
+
+	result := &KeePassFile{}
+	result.Root.Group = *rootGroup
+	return result, nil
 }
