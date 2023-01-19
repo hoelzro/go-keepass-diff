@@ -155,7 +155,6 @@ func (v3 *keepassV3Decryptor) readDatabaseHeader(r io.Reader) (*keepassDatabaseH
 headerLoop:
 	for {
 		var fieldID uint8
-		// XXX length checks?
 		err := binary.Read(r, binary.LittleEndian, &fieldID)
 		if err != nil {
 			if err == io.EOF {
@@ -166,7 +165,6 @@ headerLoop:
 		}
 
 		var fieldLength uint16
-		// XXX length checks?
 		err = binary.Read(r, binary.LittleEndian, &fieldLength)
 		if err != nil {
 			return nil, err
@@ -352,7 +350,7 @@ func decodeBlocks(r io.Reader, protectedStreamKey []byte) (*KeePassFile, error) 
 		}
 
 		blockData := make([]byte, blockSize)
-		_, err = r.Read(blockData)
+		_, err = io.ReadFull(r, blockData)
 		if err != nil {
 			return nil, err
 		}

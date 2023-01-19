@@ -42,8 +42,10 @@ func readVariantMap(data []byte) (map[string]any, error) {
 	var version uint16
 
 	r := bytes.NewReader(data)
-	// XXX length checks/error checks
-	binary.Read(r, binary.LittleEndian, &version)
+	err := binary.Read(r, binary.LittleEndian, &version)
+	if err != nil {
+		return nil, err
+	}
 	version &= VariantMapCriticalMask
 
 	maxVersion := uint16(VariantMapVersion & VariantMapCriticalMask)
@@ -59,18 +61,36 @@ func readVariantMap(data []byte) (map[string]any, error) {
 		var valueLen uint32
 
 		// XXX length checks/error checks
-		binary.Read(r, binary.LittleEndian, &fieldType)
+		err := binary.Read(r, binary.LittleEndian, &fieldType)
+		if err != nil {
+			return nil, err
+		}
 
 		if fieldType == VariantMapFieldTypeEnd {
 			return result, nil
 		}
 
-		binary.Read(r, binary.LittleEndian, &nameLen)
+		err = binary.Read(r, binary.LittleEndian, &nameLen)
+		if err != nil {
+			return nil, err
+		}
+
 		nameBytes := make([]byte, nameLen)
-		r.Read(nameBytes)
-		binary.Read(r, binary.LittleEndian, &valueLen)
+		_, err = io.ReadFull(r, nameBytes)
+		if err != nil {
+			return nil, err
+		}
+
+		err = binary.Read(r, binary.LittleEndian, &valueLen)
+		if err != nil {
+			return nil, err
+		}
+
 		valueBytes := make([]byte, valueLen)
-		r.Read(valueBytes)
+		_, err = io.ReadFull(r, valueBytes)
+		if err != nil {
+			return nil, err
+		}
 
 		name := string(nameBytes)
 
@@ -83,11 +103,17 @@ func readVariantMap(data []byte) (map[string]any, error) {
 			result[name] = valueBytes[0] != 0
 		case VariantMapFieldTypeInt32:
 			var value int32
-			binary.Read(bytes.NewReader(valueBytes), binary.LittleEndian, &value)
+			err := binary.Read(bytes.NewReader(valueBytes), binary.LittleEndian, &value)
+			if err != nil {
+				return nil, err
+			}
 			result[name] = value
 		case VariantMapFieldTypeInt64:
 			var value int64
-			binary.Read(bytes.NewReader(valueBytes), binary.LittleEndian, &value)
+			err := binary.Read(bytes.NewReader(valueBytes), binary.LittleEndian, &value)
+			if err != nil {
+				return nil, err
+			}
 			result[name] = value
 		case VariantMapFieldTypeString:
 			result[name] = string(valueBytes)
@@ -101,7 +127,7 @@ func readVariantMap(data []byte) (map[string]any, error) {
 
 func checkV4Validity(r io.Reader, signatureAndHeader []byte, masterKey, hmacKey []byte) error {
 	headerSha256 := make([]byte, 32)
-	_, err := r.Read(headerSha256)
+	_, err := io.ReadFull(r, headerSha256)
 	if err != nil {
 		return err
 	}
@@ -112,8 +138,7 @@ func checkV4Validity(r io.Reader, signatureAndHeader []byte, masterKey, hmacKey 
 	}
 
 	headerHmac := make([]byte, 32)
-	// XXX use io.ReadFull
-	_, err = r.Read(headerHmac)
+	_, err = io.ReadFull(r, headerHmac)
 	if err != nil {
 		return err
 	}
@@ -142,7 +167,7 @@ func readV4Blocks(r io.Reader, hmacKey []byte) ([]byte, error) {
 
 	for blockIndex := uint64(0); ; blockIndex++ {
 		blockHMAC := make([]byte, 32)
-		_, err := r.Read(blockHMAC)
+		_, err := io.ReadFull(r, blockHMAC)
 		if err != nil {
 			return nil, err
 		}
@@ -154,7 +179,7 @@ func readV4Blocks(r io.Reader, hmacKey []byte) ([]byte, error) {
 
 		blockData := make([]byte, blockSize)
 		if blockSize > 0 { // XXX my old code didn't have this?
-			_, err = r.Read(blockData)
+			_, err := io.ReadFull(r, blockData)
 			if err != nil {
 				return nil, err
 			}
@@ -239,7 +264,6 @@ func (v4 *keepassV4Decryptor) readDatabaseHeader(r io.Reader) (*keepassDatabaseH
 headerLoop:
 	for {
 		var fieldID uint8
-		// XXX length checks?
 		err := binary.Read(r, binary.LittleEndian, &fieldID)
 		if err != nil {
 			if err == io.EOF {
@@ -250,7 +274,6 @@ headerLoop:
 		}
 
 		var fieldLength uint32
-		// XXX length checks?
 		err = binary.Read(r, binary.LittleEndian, &fieldLength)
 		if err != nil {
 			return nil, err
