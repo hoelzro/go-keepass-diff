@@ -11,6 +11,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"io"
+	"time"
 
 	"golang.org/x/crypto/salsa20"
 )
@@ -48,8 +49,35 @@ var CipherAES256 []byte = []byte{0x31, 0xc1, 0xf2, 0xe6, 0xbf, 0x71, 0x43, 0x50,
 var KeepassIV []byte = []byte{0xe8, 0x30, 0x09, 0x4b, 0x97, 0x20, 0x5d, 0x2a}
 
 type KeePassTimes struct {
-	// XXX you could make a new type for this and impl UnmarshalXML for that type
-	LastModificationTime string `xml:"LastModificationTime"`
+	LastModificationTime time.Time
+}
+
+func (times *KeePassTimes) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	var unmarshalTimes struct {
+		LastModificationTime string `xml:"LastModificationTime"`
+	}
+
+	err := d.DecodeElement(&unmarshalTimes, &start)
+	if err != nil {
+		return err
+	}
+
+	var lastModificationTime time.Time
+	if lastModificationTimeBytes, err := base64.StdEncoding.DecodeString(unmarshalTimes.LastModificationTime); err == nil {
+		// try base-64 encoded time…
+		yearZero := time.Date(0, 1, 1, 0, 0, 0, 0, time.UTC)
+		lastModificationTime = time.Unix(int64(binary.LittleEndian.Uint64(lastModificationTimeBytes))+yearZero.Unix(), 0)
+	} else {
+		// … fall back to time as-is
+		lastModificationTime, err = time.Parse("2006-01-02T15:04:05Z", unmarshalTimes.LastModificationTime)
+		if err != nil {
+			return err
+		}
+	}
+
+	times.LastModificationTime = lastModificationTime
+
+	return nil
 }
 
 // XXX lower case struct name for privacy?

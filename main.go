@@ -4,8 +4,6 @@ package main
 
 import (
 	"crypto/sha256"
-	"encoding/base64"
-	"encoding/binary"
 	"flag"
 	"fmt"
 	"io"
@@ -38,7 +36,7 @@ func (e entry) username() string { return e.Attributes["UserName"] }
 func (e entry) notes() string    { return e.Attributes["Notes"] }
 func (e entry) url() string      { return e.Attributes["URL"] }
 
-func flattenGroupsHelper(group *KeePassGroup, groupMap map[string][]entry, path []string) error {
+func flattenGroupsHelper(group *KeePassGroup, groupMap map[string][]entry, path []string) {
 	path = append(path, group.Name)
 	fullGroupName := strings.Join(path[1:], "/")
 
@@ -49,10 +47,7 @@ func flattenGroupsHelper(group *KeePassGroup, groupMap map[string][]entry, path 
 			continue
 		}
 
-		err := flattenGroupsHelper(&child, groupMap, path)
-		if err != nil {
-			return err
-		}
+		flattenGroupsHelper(&child, groupMap, path)
 	}
 
 	groupMap[fullGroupName] = make([]entry, 0, len(group.Entries))
@@ -64,21 +59,6 @@ func flattenGroupsHelper(group *KeePassGroup, groupMap map[string][]entry, path 
 			attributes[k] = v
 		}
 
-		// XXX do this parsing in the XML unmarshal?
-		//     if you do, you can remove the error return type on this function
-		var lastModificationTime time.Time
-		if lastModificationTimeBytes, err := base64.StdEncoding.DecodeString(e.Times.LastModificationTime); err == nil {
-			// try base-64 encoded time…
-			yearZero := time.Date(0, 1, 1, 0, 0, 0, 0, time.UTC)
-			lastModificationTime = time.Unix(int64(binary.LittleEndian.Uint64(lastModificationTimeBytes))+yearZero.Unix(), 0)
-		} else {
-			// … fall back to time as-is
-			lastModificationTime, err = time.Parse("2006-01-02T15:04:05Z", e.Times.LastModificationTime)
-			if err != nil {
-				return err
-			}
-		}
-
 		if diffMode {
 			sum := sha256.New().Sum([]byte(attributes["Password"]))
 			attributes["Password"] = fmt.Sprintf("sha256:%x", sum[:8])
@@ -86,19 +66,14 @@ func flattenGroupsHelper(group *KeePassGroup, groupMap map[string][]entry, path 
 
 		groupMap[fullGroupName] = append(groupMap[fullGroupName], entry{
 			Attributes:       attributes,
-			ModificationTime: lastModificationTime,
+			ModificationTime: e.Times.LastModificationTime,
 		})
 	}
-
-	return nil
 }
 
 func flattenGroups(k *KeePassFile) (map[string][]entry, error) {
 	groups := make(map[string][]entry)
-	err := flattenGroupsHelper(&k.Root.Group, groups, make([]string, 0, 10))
-	if err != nil {
-		return nil, err
-	}
+	flattenGroupsHelper(&k.Root.Group, groups, make([]string, 0, 10))
 
 	return groups, nil
 }
