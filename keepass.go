@@ -34,14 +34,14 @@ const (
 	ProtectedStreamKey  = 8
 	StreamStartBytes    = 9
 	InnerRandomStreamID = 10
-	KdfParameters       = 11 // nolint:deadcode
+	KdfParameters       = 11
 	PublicCustomData    = 12 // nolint:deadcode
 
 	CompressionAlgorithmGzip = 1
 
 	StreamAlgorithmArcFourVariant = 1 // nolint:deadcode
 	StreamAlgorithmSalsa20        = 2
-	StreamAlgorithmChaCha20       = 3 // nolint:deadcode
+	StreamAlgorithmChaCha20       = 3
 
 	SecondsBetweenEpochAndYearZero = int64(-62135596800)
 )
