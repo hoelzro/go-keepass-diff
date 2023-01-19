@@ -433,6 +433,14 @@ func (v4 *keepassV4Decryptor) Decrypt(r io.Reader, password string) (*KeePassFil
 	plaintext := make([]byte, len(blockBytes))
 	decrypt.CryptBlocks(plaintext, blockBytes)
 
+	// since AES is block-based, the gzip'd contents needs to be padded up to AES block size - which
+	// leaves some "junk bytes" after the actual gzip'd bytes.  KeePass appears to pad the contents
+	// with N bytes, where N is between 1-blockSize (so it'll even pad with blockSize bytes if it
+	// doesn't have to pad at all), and the padding is the byte N repeated N times.  That means the
+	// last byte contains the number of padding bytes that were added, so chop that off before
+	// feeding it to gzip
+	plaintext = plaintext[:len(plaintext)-int(plaintext[len(plaintext)-1])]
+
 	gzipReader, err := gzip.NewReader(bytes.NewReader(plaintext))
 	if err != nil {
 		return nil, err
@@ -444,12 +452,7 @@ func (v4 *keepassV4Decryptor) Decrypt(r io.Reader, password string) (*KeePassFil
 	}
 
 	uncompressedPayload, err := io.ReadAll(gzipReader)
-	// because the gzip'd XML is encrypted using a block cipher, it had to be padded up to the cipher's
-	// block size - so there might be extra junk after the full gzip'd contents, which surfaces as a
-	// gzip.ErrHeader.  It would be great to detect how *much* junk there is and be more precise in our
-	// handling, but for now just ignore gzip.ErrHeader and rely on XML parsing to catch "real" gzip
-	// errors
-	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, gzip.ErrHeader) {
+	if err != nil {
 		return nil, err
 	}
 
