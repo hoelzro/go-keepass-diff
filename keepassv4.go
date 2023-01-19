@@ -8,9 +8,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/sha512"
-	"encoding/base64"
 	"encoding/binary"
-	"encoding/xml"
 	"errors"
 	"io"
 
@@ -461,54 +459,13 @@ func (v4 *keepassV4Decryptor) Decrypt(r io.Reader, password string) (*KeePassFil
 		return nil, err
 	}
 
-	// set up unmarshaling-specific data to thread a pointer to
-	// this slice throughout the XML unmarshaling process
-	var needsDecryption []protectedValueRef
-
-	var unmarshalMe struct {
-		Root struct {
-			Groups *groupUnmarshaler `xml:"Group"`
-		} `xml:"Root"`
-	}
-	unmarshalMe.Root.Groups = &groupUnmarshaler{
-		needsDecryption: &needsDecryption,
-	}
-
-	err = xml.Unmarshal(uncompressedPayload, &unmarshalMe)
+	rootGroup, err := unmarshalAndDecryptProtectedValues(uncompressedPayload, chachaStream)
 	if err != nil {
 		return nil, err
 	}
 
-	// XXX move this part into common code
-	// collect all of the bytes encrypted by the database stream cipher
-	protectedBytes := make([]byte, 0)
-	for _, ref := range needsDecryption {
-		rawBytes, err := base64.StdEncoding.DecodeString(ref.m[ref.k])
-		if err != nil {
-			panic(err.Error())
-		}
-		protectedBytes = append(protectedBytes, rawBytes...)
-	}
-
-	// …decrypt those protected bytes
-	decryptedProtectedBytes := make([]byte, len(protectedBytes))
-	chachaStream.XORKeyStream(decryptedProtectedBytes, protectedBytes)
-
-	// …and update the references with the decrypted strings
-	for _, ref := range needsDecryption {
-		rawBytes, err := base64.StdEncoding.DecodeString(ref.m[ref.k])
-		if err != nil {
-			panic(err.Error())
-		}
-		decryptedValue := decryptedProtectedBytes[:len(rawBytes)]
-		decryptedProtectedBytes = decryptedProtectedBytes[len(rawBytes):]
-		ref.m[ref.k] = string(decryptedValue)
-	}
-
-	// XXX assert there's exactly 1?
-	rootGroup := unmarshalMe.Root.Groups.KeePassGroup
-
 	result := &KeePassFile{}
 	result.Root.Group = *rootGroup
+
 	return result, nil
 }

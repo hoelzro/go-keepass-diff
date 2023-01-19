@@ -313,8 +313,65 @@ func checkFirstBlock(r io.Reader, header *keepassDatabaseHeader, decrypt cipher.
 	return nil
 }
 
+func unmarshalAndDecryptProtectedValues(uncompressedPayload []byte, cipherStream cipher.Stream) (*KeePassGroup, error) {
+	// set up unmarshaling-specific data to thread a pointer to
+	// this slice throughout the XML unmarshaling process
+	var needsDecryption []protectedValueRef
+
+	var unmarshalMe struct {
+		Root struct {
+			Groups *groupUnmarshaler `xml:"Group"`
+		} `xml:"Root"`
+	}
+	unmarshalMe.Root.Groups = &groupUnmarshaler{
+		needsDecryption: &needsDecryption,
+	}
+
+	err := xml.Unmarshal(uncompressedPayload, &unmarshalMe)
+	if err != nil {
+		return nil, err
+	}
+
+	// collect all of the bytes encrypted by the database stream cipher
+	protectedBytes := make([]byte, 0)
+	for _, ref := range needsDecryption {
+		rawBytes, err := base64.StdEncoding.DecodeString(ref.m[ref.k])
+		if err != nil {
+			panic(err.Error())
+		}
+		protectedBytes = append(protectedBytes, rawBytes...)
+	}
+
+	// …decrypt those protected bytes
+	decryptedProtectedBytes := make([]byte, len(protectedBytes))
+	cipherStream.XORKeyStream(decryptedProtectedBytes, protectedBytes)
+
+	// …and update the references with the decrypted strings
+	for _, ref := range needsDecryption {
+		rawBytes, err := base64.StdEncoding.DecodeString(ref.m[ref.k])
+		if err != nil {
+			panic(err.Error())
+		}
+		decryptedValue := decryptedProtectedBytes[:len(rawBytes)]
+		decryptedProtectedBytes = decryptedProtectedBytes[len(rawBytes):]
+		ref.m[ref.k] = string(decryptedValue)
+	}
+
+	// XXX assert there's exactly 1?
+	return unmarshalMe.Root.Groups.KeePassGroup, nil
+}
+
 // z32 is run of 32 zero bytes
 var z32 = make([]byte, 32)
+
+type salsa20CipherStream struct {
+	IV  []byte
+	Key [32]byte
+}
+
+func (stream *salsa20CipherStream) XORKeyStream(dst, src []byte) {
+	salsa20.XORKeyStream(dst, src, stream.IV, &stream.Key)
+}
 
 func decodeBlocks(r io.Reader, protectedStreamKey []byte) (*KeePassFile, error) {
 	var result *KeePassFile
@@ -365,52 +422,13 @@ func decodeBlocks(r io.Reader, protectedStreamKey []byte) (*KeePassFile, error) 
 			return nil, err
 		}
 
-		// set up unmarshaling-specific data to thread a pointer to
-		// this slice throughout the XML unmarshaling process
-		var needsDecryption []protectedValueRef
-
-		var unmarshalMe struct {
-			Root struct {
-				Groups *groupUnmarshaler `xml:"Group"`
-			} `xml:"Root"`
-		}
-		unmarshalMe.Root.Groups = &groupUnmarshaler{
-			needsDecryption: &needsDecryption,
-		}
-
-		err = xml.Unmarshal(uncompressedPayload, &unmarshalMe)
+		rootGroup, err := unmarshalAndDecryptProtectedValues(uncompressedPayload, &salsa20CipherStream{
+			IV:  KeepassIV,
+			Key: sha256.Sum256(protectedStreamKey),
+		})
 		if err != nil {
 			return nil, err
 		}
-
-		// collect all of the bytes encrypted by the database stream cipher
-		protectedBytes := make([]byte, 0)
-		for _, ref := range needsDecryption {
-			rawBytes, err := base64.StdEncoding.DecodeString(ref.m[ref.k])
-			if err != nil {
-				panic(err.Error())
-			}
-			protectedBytes = append(protectedBytes, rawBytes...)
-		}
-
-		// …decrypt those protected bytes
-		decryptedProtectedBytes := make([]byte, len(protectedBytes))
-		key := sha256.Sum256(protectedStreamKey)
-		salsa20.XORKeyStream(decryptedProtectedBytes, protectedBytes, KeepassIV, &key)
-
-		// …and update the references with the decrypted strings
-		for _, ref := range needsDecryption {
-			rawBytes, err := base64.StdEncoding.DecodeString(ref.m[ref.k])
-			if err != nil {
-				panic(err.Error())
-			}
-			decryptedValue := decryptedProtectedBytes[:len(rawBytes)]
-			decryptedProtectedBytes = decryptedProtectedBytes[len(rawBytes):]
-			ref.m[ref.k] = string(decryptedValue)
-		}
-
-		// XXX assert there's exactly 1?
-		rootGroup := unmarshalMe.Root.Groups.KeePassGroup
 
 		result = &KeePassFile{}
 		result.Root.Group = *rootGroup
