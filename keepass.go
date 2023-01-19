@@ -136,13 +136,71 @@ func checkMagicSignature(r io.Reader) (keepassDecryptor, error) {
 	}
 }
 
+type KeyDerivationFunction interface {
+	MakeKey(password string) []byte
+}
+
 type keepassDatabaseHeader struct {
 	masterSeed         []byte
-	transformSeed      []byte
 	encryptionIV       []byte
 	protectedStreamKey []byte
 	streamStartBytes   []byte
-	rounds             uint64
+
+	kdf KeyDerivationFunction
+}
+
+type aesKDF struct {
+	aesCipher cipher.Block
+	rounds    uint64
+}
+
+func (kdf *aesKDF) MakeKey(password string) []byte {
+	passwordHash := sha256.Sum256([]byte(password))
+
+	compositeKey := sha256.Sum256(passwordHash[:])
+
+	transformedKey := compositeKey
+	aesCipher := kdf.aesCipher
+	// XXX multithread this using a stretched out slice
+	for i := uint64(0); i < kdf.rounds; i++ {
+		aesCipher.Encrypt(transformedKey[0:16], transformedKey[0:16])
+		aesCipher.Encrypt(transformedKey[16:32], transformedKey[16:32])
+	}
+	transformedKey = sha256.Sum256(transformedKey[:])
+	return transformedKey[:]
+}
+
+func createKDF(kdfParameters map[string]any) (KeyDerivationFunction, error) {
+	kdfUUIDBytes := kdfParameters["$UUID"].([]byte)
+	kdfUUID, err := uuid.FromBytes(kdfUUIDBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	if kdfUUID != KdfUUIDAes {
+		return nil, errors.New("unknown/unsupported KDF")
+	}
+
+	// XXX also check for presence for better error message?
+	transformSeed, ok := kdfParameters["S"].([]byte)
+	if !ok {
+		return nil, errors.New("transform seed was not a byte array")
+	}
+
+	rounds, ok := kdfParameters["R"].(uint64)
+	if !ok {
+		return nil, errors.New("transform rounds was not an integer")
+	}
+
+	aesCipher, err := aes.NewCipher(transformSeed)
+	if err != nil {
+		return nil, err
+	}
+
+	return &aesKDF{
+		aesCipher: aesCipher,
+		rounds:    rounds,
+	}, nil
 }
 
 func readDatabaseHeader[FieldLength uint16 | uint32](r io.Reader) (*keepassDatabaseHeader, error) {
@@ -270,54 +328,19 @@ headerLoop:
 		return nil, errors.New("encryption IV field not found")
 	}
 
-	kdfUUIDBytes := kdfParameters["$UUID"].([]byte)
-	kdfUUID, err := uuid.FromBytes(kdfUUIDBytes)
+	kdf, err := createKDF(kdfParameters)
 	if err != nil {
 		return nil, err
-	}
-
-	if kdfUUID != KdfUUIDAes {
-		return nil, errors.New("unknown/unsupported KDF")
-	}
-
-	// XXX also check for presence for better error message?
-	transformSeed, ok := kdfParameters["S"].([]byte)
-	if !ok {
-		return nil, errors.New("transform seed was not a byte array")
-	}
-
-	rounds, ok := kdfParameters["R"].(uint64)
-	if !ok {
-		return nil, errors.New("transform rounds was not an integer")
 	}
 
 	return &keepassDatabaseHeader{
 		masterSeed:         masterSeed,
 		encryptionIV:       encryptionIV,
-		transformSeed:      transformSeed,
-		rounds:             rounds,
 		protectedStreamKey: protectedStreamKey,
 		streamStartBytes:   streamStartBytes,
+
+		kdf: kdf,
 	}, nil
-}
-
-func makeMasterKey(header *keepassDatabaseHeader, password string) ([]byte, error) {
-	passwordHash := sha256.Sum256([]byte(password))
-
-	compositeKey := sha256.Sum256(passwordHash[:])
-
-	transformedKey := compositeKey
-	aesCipher, err := aes.NewCipher(header.transformSeed)
-	if err != nil {
-		return nil, err
-	}
-	// XXX multithread this using a stretched out slice
-	for i := uint64(0); i < header.rounds; i++ {
-		aesCipher.Encrypt(transformedKey[0:16], transformedKey[0:16])
-		aesCipher.Encrypt(transformedKey[16:32], transformedKey[16:32])
-	}
-	transformedKey = sha256.Sum256(transformedKey[:])
-	return transformedKey[:], nil
 }
 
 func checkFirstBlock(r io.Reader, header *keepassDatabaseHeader, decrypt cipher.BlockMode) error {
@@ -485,10 +508,7 @@ func (v3 *keepassV3Decryptor) Decrypt(r io.Reader, password string) (*KeePassFil
 		return nil, errors.New("stream start bytes field not found")
 	}
 
-	masterKey, err := makeMasterKey(header, password)
-	if err != nil {
-		return nil, err
-	}
+	masterKey := header.kdf.MakeKey(password)
 
 	h := sha256.New()
 	h.Write(header.masterSeed)

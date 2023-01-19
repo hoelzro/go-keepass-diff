@@ -269,10 +269,7 @@ func (v4 *keepassV4Decryptor) Decrypt(r io.Reader, password string) (*KeePassFil
 		return nil, err
 	}
 
-	masterKey, err := makeMasterKey(header, password)
-	if err != nil {
-		return nil, err
-	}
+	masterKey := header.kdf.MakeKey(password)
 
 	var hmacKey []byte
 	{
