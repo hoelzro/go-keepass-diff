@@ -4,6 +4,8 @@ package main
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
+	"encoding/binary"
 	"flag"
 	"fmt"
 	"io"
@@ -64,9 +66,17 @@ func flattenGroupsHelper(group *KeePassGroup, groupMap map[string][]entry, path 
 
 		// XXX do this parsing in the XML unmarshal?
 		//     if you do, you can remove the error return type on this function
-		lastModificationTime, err := time.Parse("2006-01-02T15:04:05Z", e.Times.LastModificationTime)
-		if err != nil {
-			return err
+		var lastModificationTime time.Time
+		if lastModificationTimeBytes, err := base64.StdEncoding.DecodeString(e.Times.LastModificationTime); err == nil {
+			// try base-64 encoded time…
+			yearZero := time.Date(0, 1, 1, 0, 0, 0, 0, time.UTC)
+			lastModificationTime = time.Unix(int64(binary.LittleEndian.Uint64(lastModificationTimeBytes))+yearZero.Unix(), 0)
+		} else {
+			// … fall back to time as-is
+			lastModificationTime, err = time.Parse("2006-01-02T15:04:05Z", e.Times.LastModificationTime)
+			if err != nil {
+				return err
+			}
 		}
 
 		if diffMode {
