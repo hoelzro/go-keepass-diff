@@ -68,8 +68,8 @@ func TestDiff(t *testing.T) {
 			if err := diff(
 				leftFile,
 				rightFile,
-				test.left,
-				test.right,
+				"left.kdbx",
+				"right.kdbx",
 				"abc123",
 				b,
 			); err != nil {
