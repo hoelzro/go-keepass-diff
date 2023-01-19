@@ -181,11 +181,9 @@ func readV4Blocks(r io.Reader, hmacKey []byte) ([]byte, error) {
 		}
 
 		blockData := make([]byte, blockSize)
-		if blockSize > 0 { // XXX my old code didn't have this?
-			_, err := io.ReadFull(r, blockData)
-			if err != nil {
-				return nil, err
-			}
+		_, err = io.ReadFull(r, blockData)
+		if err != nil {
+			return nil, err
 		}
 
 		transform := sha512.New()
