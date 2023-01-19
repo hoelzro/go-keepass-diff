@@ -13,7 +13,6 @@ import (
 	"encoding/xml"
 	"errors"
 	"io"
-	"io/ioutil"
 
 	"golang.org/x/crypto/chacha20"
 )
@@ -413,7 +412,7 @@ func (v4 *keepassV4Decryptor) Decrypt(r io.Reader, password string) (*KeePassFil
 		return nil, err
 	}
 
-	uncompressedPayload, err := ioutil.ReadAll(gzipReader)
+	uncompressedPayload, err := io.ReadAll(gzipReader)
 	// because the gzip'd XML is encrypted using a block cipher, it had to be padded up to the cipher's
 	// block size - so there might be extra junk after the full gzip'd contents, which surfaces as a
 	// gzip.ErrHeader.  It would be great to detect how *much* junk there is and be more precise in our
