@@ -5,6 +5,9 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"os"
+	"path"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -20,6 +23,7 @@ var testdata fs.FS
 
 //go:embed testdata
 var _testdata embed.FS
+
 func init() {
 	var err error
 	testdata, err = fs.Sub(_testdata, "testdata")
@@ -27,7 +31,6 @@ func init() {
 		panic("couldn't fs.Sub testdata:" + err.Error())
 	}
 }
-
 
 type diffTest struct {
 	left           string
@@ -124,5 +127,32 @@ func TestDecryptDatabase(t *testing.T) {
 	}
 	if d := cmp.Diff("fUBH7WxV8O9sBhvh", kv["Password"]); d != "" {
 		t.Errorf("incorrect Password: %s", d)
+	}
+}
+
+func TestLoad(t *testing.T) {
+	entries, err := os.ReadDir("testdata")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".kdbx") {
+			continue
+		}
+
+		// XXX subtest?
+		path := path.Join("testdata", entry.Name())
+
+		f, err := os.Open(path)
+		if err != nil {
+			t.Error(err)
+			continue
+		}
+		_, err = decryptDatabase(f, "abc123")
+		f.Close()
+		if err != nil {
+			t.Errorf("failed to decrypt database %s: %v", path, err)
+		}
 	}
 }
