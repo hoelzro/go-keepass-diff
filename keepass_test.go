@@ -9,6 +9,7 @@ import (
 	"path"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 )
@@ -199,6 +200,12 @@ func TestEntries(t *testing.T) {
 	entry := findEntry(&db.Root.Group, "one")
 
 	if diff := cmp.Diff(expectedKeyValues, entry.KeyValues); diff != "" {
+		t.Errorf("diff is wrong: %s", diff)
+	}
+
+	cstTimeZone := time.FixedZone("CST", -6*3_600)
+	expectedLastModificationTime := time.Date(2023, 1, 17, 8, 38, 31, 0, cstTimeZone)
+	if diff := cmp.Diff(expectedLastModificationTime, entry.Times.LastModificationTime); diff != "" {
 		t.Errorf("diff is wrong: %s", diff)
 	}
 }
