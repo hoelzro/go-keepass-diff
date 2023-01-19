@@ -156,3 +156,49 @@ func TestLoad(t *testing.T) {
 		}
 	}
 }
+
+func findEntry(db *KeePassGroup, targetTitle string) *KeePassEntry {
+	for _, entry := range db.Entries {
+		if entry.KeyValues["Title"] == targetTitle {
+			return &entry
+		}
+	}
+
+	for _, subgroup := range db.Groups {
+		entry := findEntry(&subgroup, targetTitle)
+		if entry != nil {
+			return entry
+		}
+	}
+
+	return nil
+}
+
+func TestEntries(t *testing.T) {
+	f, err := os.Open("testdata/onev4-add-attribute.kdbx")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer f.Close()
+
+	db, err := decryptDatabase(f, "abc123")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expectedKeyValues := map[string]string{
+		"key":      "value",
+		"Notes":    "notes notes notes",
+		"Password": "fUBH7WxV8O9sBhvh",
+		"Title":    "one",
+		"URL":      "https://example.com",
+		"UserName": "user",
+	}
+
+	entry := findEntry(&db.Root.Group, "one")
+
+	if diff := cmp.Diff(expectedKeyValues, entry.KeyValues); diff != "" {
+		t.Errorf("diff is wrong: %s", diff)
+	}
+}
