@@ -254,131 +254,6 @@ innerHeaderLoop:
 	return streamKey, nil
 }
 
-// XXX this is nearly identical to keepassV3Decryptor.readDatabaseHeader :(
-func (v4 *keepassV4Decryptor) readDatabaseHeader(r io.Reader) (*keepassDatabaseHeader, error) {
-	var masterSeed []byte
-	var encryptionIV []byte
-	var kdfParameters map[string]any
-
-headerLoop:
-	for {
-		var fieldID uint8
-		err := binary.Read(r, binary.LittleEndian, &fieldID)
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-
-			return nil, err
-		}
-
-		var fieldLength uint32
-		err = binary.Read(r, binary.LittleEndian, &fieldLength)
-		if err != nil {
-			return nil, err
-		}
-
-		fieldData := make([]byte, fieldLength)
-		_, err = io.ReadFull(r, fieldData)
-		if err != nil {
-			return nil, err
-		}
-
-		switch fieldID {
-		case EndOfHeader:
-			break headerLoop
-		case CipherID:
-			// if you extend this, you'll need to embed this information in
-			// the keepassDatabaseHeader struct, you'll need to check that
-			// that field's been set at the end of this function, and you'll
-			// need to actually use the proper algorithm during seed transformation
-			if !bytes.Equal(fieldData, CipherAES256) {
-				return nil, errors.New("unsupported cipher")
-			}
-		case CompressionFlags:
-			var compressionAlgorithm uint32
-			err := binary.Read(bytes.NewReader(fieldData), binary.LittleEndian, &compressionAlgorithm)
-			if err != nil {
-				return nil, err
-			}
-			// if you extend this, you'll need to embed this information in
-			// the keepassDatabaseHeader struct, you'll need to check that
-			// that field's been set at the end of this function, and you'll
-			// need to actually use the proper algorithm during block data
-			// reading
-			if compressionAlgorithm != CompressionAlgorithmGzip {
-				return nil, errors.New("unsupported compression algorithm")
-			}
-		case MasterSeed:
-			if len(fieldData) != 32 {
-				return nil, errors.New("insufficient field data")
-			}
-			masterSeed = fieldData
-		case EncryptionIV:
-			encryptionIV = fieldData
-		case InnerRandomStreamID:
-			var streamID uint32
-			err := binary.Read(bytes.NewReader(fieldData), binary.LittleEndian, &streamID)
-			if err != nil {
-				return nil, err
-			}
-
-			// if you extend this, you'll need to embed this information in
-			// the keepassDatabaseHeader struct, you'll need to check that
-			// that field's been set at the end of this function, and you'll
-			// need to actually use the proper algorithm during key/value pair
-			// reading
-			if streamID != StreamAlgorithmSalsa20 {
-				return nil, errors.New("unsupported stream algorithm")
-			}
-		case KdfParameters:
-			var err error
-
-			kdfParameters, err = readVariantMap(fieldData)
-			if err != nil {
-				return nil, err
-			}
-		default:
-			return nil, errors.New("invalid header field ID")
-		}
-	}
-
-	kdfUUIDBytes := kdfParameters["$UUID"].([]byte)
-	kdfUUID, err := uuid.FromBytes(kdfUUIDBytes)
-	if err != nil {
-		return nil, err
-	}
-
-	if kdfUUID != KdfUUIDAes {
-		return nil, errors.New("unknown/unsupported KDF")
-	}
-
-	if masterSeed == nil {
-		return nil, errors.New("master seed field not found")
-	}
-	if encryptionIV == nil {
-		return nil, errors.New("encryption IV field not found")
-	}
-
-	// XXX also check for presence for better error message?
-	transformSeed, ok := kdfParameters["S"].([]byte)
-	if !ok {
-		return nil, errors.New("transform seed was not a byte array")
-	}
-
-	rounds, ok := kdfParameters["R"].(uint64)
-	if !ok {
-		return nil, errors.New("transform rounds was not an integer")
-	}
-
-	return &keepassDatabaseHeader{
-		masterSeed:    masterSeed,
-		encryptionIV:  encryptionIV,
-		transformSeed: transformSeed,
-		rounds:        rounds,
-	}, nil
-}
-
 func (v4 *keepassV4Decryptor) Decrypt(r io.Reader, password string) (*KeePassFile, error) {
 	// copy the magic numbers and version for integrity checks
 	headerBuffer := bytes.NewBuffer(nil)
@@ -389,7 +264,7 @@ func (v4 *keepassV4Decryptor) Decrypt(r io.Reader, password string) (*KeePassFil
 
 	// read the header, and use a TeeReader to squirrel away the rest of the header's contents while
 	// doing that so we have them for integrity checks
-	header, err := v4.readDatabaseHeader(io.TeeReader(r, headerBuffer))
+	header, err := readDatabaseHeader[uint32](io.TeeReader(r, headerBuffer))
 	if err != nil {
 		return nil, err
 	}

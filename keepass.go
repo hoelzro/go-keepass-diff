@@ -13,6 +13,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/crypto/salsa20"
 )
 
@@ -144,13 +145,12 @@ type keepassDatabaseHeader struct {
 	rounds             uint64
 }
 
-func (v3 *keepassV3Decryptor) readDatabaseHeader(r io.Reader) (*keepassDatabaseHeader, error) {
+func readDatabaseHeader[FieldLength uint16 | uint32](r io.Reader) (*keepassDatabaseHeader, error) {
 	var masterSeed []byte
-	var transformSeed []byte
 	var encryptionIV []byte
 	var protectedStreamKey []byte
 	var streamStartBytes []byte
-	var rounds *uint64
+	kdfParameters := make(map[string]any)
 
 headerLoop:
 	for {
@@ -164,7 +164,7 @@ headerLoop:
 			return nil, err
 		}
 
-		var fieldLength uint16
+		var fieldLength FieldLength
 		err = binary.Read(r, binary.LittleEndian, &fieldLength)
 		if err != nil {
 			return nil, err
@@ -187,6 +187,12 @@ headerLoop:
 			if !bytes.Equal(fieldData, CipherAES256) {
 				return nil, errors.New("unsupported cipher")
 			}
+
+			uuidBytes, err := KdfUUIDAes.MarshalBinary()
+			if err != nil {
+				return nil, err
+			}
+			kdfParameters["$UUID"] = uuidBytes
 		case CompressionFlags:
 			var compressionAlgorithm uint32
 			err := binary.Read(bytes.NewReader(fieldData), binary.LittleEndian, &compressionAlgorithm)
@@ -210,13 +216,14 @@ headerLoop:
 			if len(fieldData) != 32 {
 				return nil, errors.New("insufficient field data")
 			}
-			transformSeed = fieldData
+			kdfParameters["S"] = fieldData
 		case TransformRounds:
-			rounds = new(uint64)
-			err := binary.Read(bytes.NewReader(fieldData), binary.LittleEndian, rounds)
+			var rounds uint64
+			err := binary.Read(bytes.NewReader(fieldData), binary.LittleEndian, &rounds)
 			if err != nil {
 				return nil, err
 			}
+			kdfParameters["R"] = rounds
 		case EncryptionIV:
 			encryptionIV = fieldData
 		case ProtectedStreamKey:
@@ -244,6 +251,13 @@ headerLoop:
 			if streamID != StreamAlgorithmSalsa20 {
 				return nil, errors.New("unsupported stream algorithm")
 			}
+		case KdfParameters:
+			var err error
+
+			kdfParameters, err = readVariantMap(fieldData)
+			if err != nil {
+				return nil, err
+			}
 		default:
 			return nil, errors.New("invalid header field ID")
 		}
@@ -252,29 +266,38 @@ headerLoop:
 	if masterSeed == nil {
 		return nil, errors.New("master seed field not found")
 	}
-	if transformSeed == nil {
-		return nil, errors.New("transform seed field not found")
-	}
 	if encryptionIV == nil {
 		return nil, errors.New("encryption IV field not found")
 	}
-	if protectedStreamKey == nil {
-		return nil, errors.New("protected stream key field not found")
+
+	kdfUUIDBytes := kdfParameters["$UUID"].([]byte)
+	kdfUUID, err := uuid.FromBytes(kdfUUIDBytes)
+	if err != nil {
+		return nil, err
 	}
-	if streamStartBytes == nil {
-		return nil, errors.New("stream start bytes field not found")
+
+	if kdfUUID != KdfUUIDAes {
+		return nil, errors.New("unknown/unsupported KDF")
 	}
-	if rounds == nil {
-		return nil, errors.New("transform rounds field not found")
+
+	// XXX also check for presence for better error message?
+	transformSeed, ok := kdfParameters["S"].([]byte)
+	if !ok {
+		return nil, errors.New("transform seed was not a byte array")
+	}
+
+	rounds, ok := kdfParameters["R"].(uint64)
+	if !ok {
+		return nil, errors.New("transform rounds was not an integer")
 	}
 
 	return &keepassDatabaseHeader{
 		masterSeed:         masterSeed,
-		transformSeed:      transformSeed,
 		encryptionIV:       encryptionIV,
+		transformSeed:      transformSeed,
+		rounds:             rounds,
 		protectedStreamKey: protectedStreamKey,
 		streamStartBytes:   streamStartBytes,
-		rounds:             *rounds,
 	}, nil
 }
 
@@ -450,9 +473,16 @@ func (v3 *keepassV3Decryptor) Decrypt(r io.Reader, password string) (*KeePassFil
 		return nil, err
 	}
 
-	header, err := v3.readDatabaseHeader(r)
+	header, err := readDatabaseHeader[uint16](r)
 	if err != nil {
 		return nil, err
+	}
+
+	if header.protectedStreamKey == nil {
+		return nil, errors.New("protected stream key field not found")
+	}
+	if header.streamStartBytes == nil {
+		return nil, errors.New("stream start bytes field not found")
 	}
 
 	masterKey, err := makeMasterKey(header, password)
