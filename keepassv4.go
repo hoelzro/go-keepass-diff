@@ -351,13 +351,15 @@ headerLoop:
 }
 
 func (v4 *keepassV4Decryptor) Decrypt(r io.Reader, password string) (*KeePassFile, error) {
-	// At this point we've read the file signature from r, but we need it for the header integrity check
-	// *Fortunately* the signature is two magic numbers and a version number that we know, so we don't
-	// need to go out of our way to squirrel it away and pass it in
-	signature := []byte{0x03, 0xd9, 0xa2, 0x9a, 0x67, 0xfb, 0x4b, 0xb5, 0x00, 0x00, 0x04, 0x00}
-	headerBuffer := bytes.NewBuffer(signature)
+	// copy the magic numbers and version for integrity checks
+	headerBuffer := bytes.NewBuffer(nil)
+	_, err := io.CopyN(headerBuffer, r, 12)
+	if err != nil {
+		return nil, err
+	}
 
-	// …and then use a TeeReader to squirrel away the rest of the header's contents while reading it
+	// read the header, and use a TeeReader to squirrel away the rest of the header's contents while
+	// doing that so we have them for integrity checks
 	header, err := v4.readDatabaseHeader(io.TeeReader(r, headerBuffer))
 	if err != nil {
 		return nil, err

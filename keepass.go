@@ -428,6 +428,12 @@ type keepassDecryptor interface {
 type keepassV3Decryptor struct{}
 
 func (v3 *keepassV3Decryptor) Decrypt(r io.Reader, password string) (*KeePassFile, error) {
+	// drop the magic numbers and version
+	_, err := io.CopyN(io.Discard, r, 12)
+	if err != nil {
+		return nil, err
+	}
+
 	header, err := v3.readDatabaseHeader(r)
 	if err != nil {
 		return nil, err
@@ -469,10 +475,13 @@ func (v3 *keepassV3Decryptor) Decrypt(r io.Reader, password string) (*KeePassFil
 }
 
 func decryptDatabase(r io.Reader, password string) (*KeePassFile, error) {
-	decryptor, err := checkMagicSignature(r)
+	// read the magic numbers and version, but preserve the bytes so that we can pass them along,
+	// because V4 integrity checks take them into account
+	signatureBuffer := bytes.NewBuffer(nil)
+	decryptor, err := checkMagicSignature(io.TeeReader(r, signatureBuffer))
 	if err != nil {
 		return nil, err
 	}
 
-	return decryptor.Decrypt(r, password)
+	return decryptor.Decrypt(io.MultiReader(signatureBuffer, r), password)
 }
