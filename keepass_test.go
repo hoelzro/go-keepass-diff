@@ -44,6 +44,7 @@ var tests = []diffTest{
 	// this file also tests that entries in the root group are diffed
 	{left: "mod-time-only-before.kdbx", right: "mod-time-only-after.kdbx", expectedOutput: "mod-time-only-expected.txt"},
 	{left: "onev4.kdbx", right: "twov4.kdbx", expectedOutput: "expected.txt"},
+	{left: "onev4-argon.kdbx", right: "twov4-argon.kdbx", expectedOutput: "expected.txt"},
 	// XXX one.kdbx and twov4.kdbx too
 }
 
