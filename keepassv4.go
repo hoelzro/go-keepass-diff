@@ -12,7 +12,6 @@ import (
 	"errors"
 	"io"
 
-	"github.com/google/uuid"
 	"golang.org/x/crypto/chacha20"
 )
 
@@ -34,8 +33,6 @@ const (
 	InnerHeaderFieldIDStreamKey = 2
 	InnerHeaderFieldIDBinary    = 3
 )
-
-var KdfUUIDAes = uuid.Must(uuid.Parse("c9d9f39a-628a-4460-bf74-0d08c18a4fea"))
 
 type keepassV4Decryptor struct{}
 

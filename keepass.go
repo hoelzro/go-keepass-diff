@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/salsa20"
 )
 
@@ -45,6 +46,11 @@ const (
 	StreamAlgorithmChaCha20       = 3
 
 	SecondsBetweenEpochAndYearZero = int64(-62135596800)
+)
+
+var (
+	KdfUUIDAes      = uuid.Must(uuid.Parse("c9d9f39a-628a-4460-bf74-0d08c18a4fea"))
+	KdfUUIDArgon2id = uuid.Must(uuid.Parse("9e298b19-56db-4773-b23d-fc3ec6f0a1e6"))
 )
 
 var CipherAES256 []byte = []byte{0x31, 0xc1, 0xf2, 0xe6, 0xbf, 0x71, 0x43, 0x50, 0xbe, 0x58, 0x05, 0x21, 0x6a, 0xfc, 0x5a, 0xff}
@@ -170,6 +176,20 @@ func (kdf *aesKDF) MakeKey(password string) []byte {
 	return transformedKey[:]
 }
 
+type argon2idKDF struct {
+	seed        []byte
+	rounds      uint32
+	memory      uint32
+	parallelism uint8
+}
+
+func (kdf *argon2idKDF) MakeKey(password string) []byte {
+	passwordHash := sha256.Sum256([]byte(password))
+	compositeKey := sha256.Sum256(passwordHash[:])
+
+	return argon2.IDKey(compositeKey[:], kdf.seed, kdf.rounds, kdf.memory, kdf.parallelism, 32)
+}
+
 func createKDF(kdfParameters map[string]any) (KeyDerivationFunction, error) {
 	kdfUUIDBytes := kdfParameters["$UUID"].([]byte)
 	kdfUUID, err := uuid.FromBytes(kdfUUIDBytes)
@@ -177,30 +197,62 @@ func createKDF(kdfParameters map[string]any) (KeyDerivationFunction, error) {
 		return nil, err
 	}
 
-	if kdfUUID != KdfUUIDAes {
+	if kdfUUID == KdfUUIDAes {
+		// XXX also check for presence for better error message?
+		transformSeed, ok := kdfParameters["S"].([]byte)
+		if !ok {
+			return nil, errors.New("transform seed was not a byte array")
+		}
+
+		rounds, ok := kdfParameters["R"].(uint64)
+		if !ok {
+			return nil, errors.New("transform rounds was not an integer")
+		}
+
+		aesCipher, err := aes.NewCipher(transformSeed)
+		if err != nil {
+			return nil, err
+		}
+
+		return &aesKDF{
+			aesCipher: aesCipher,
+			rounds:    rounds,
+		}, nil
+	} else if kdfUUID == KdfUUIDArgon2id {
+		// XXX also check for presence for better error message?
+		seed, ok := kdfParameters["S"].([]byte)
+		if !ok {
+			return nil, errors.New("seed was not a byte array")
+		}
+
+		rounds, ok := kdfParameters["I"].(uint64)
+		if !ok {
+			return nil, errors.New("transform rounds was not an integer")
+		}
+
+		memory, ok := kdfParameters["M"].(uint64)
+		if !ok {
+			return nil, errors.New("memory was not an integer")
+		}
+
+		parallelism, ok := kdfParameters["P"].(uint32)
+		if !ok {
+			return nil, errors.New("parallelism was not an integer")
+		}
+
+		if memory%1024 != 0 {
+			return nil, errors.New("can't handle Argon2 memory parameter not divisible by 1024")
+		}
+
+		return &argon2idKDF{
+			seed:        seed,
+			memory:      uint32(memory / 1024),
+			parallelism: uint8(parallelism),
+			rounds:      uint32(rounds),
+		}, nil
+	} else {
 		return nil, errors.New("unknown/unsupported KDF")
 	}
-
-	// XXX also check for presence for better error message?
-	transformSeed, ok := kdfParameters["S"].([]byte)
-	if !ok {
-		return nil, errors.New("transform seed was not a byte array")
-	}
-
-	rounds, ok := kdfParameters["R"].(uint64)
-	if !ok {
-		return nil, errors.New("transform rounds was not an integer")
-	}
-
-	aesCipher, err := aes.NewCipher(transformSeed)
-	if err != nil {
-		return nil, err
-	}
-
-	return &aesKDF{
-		aesCipher: aesCipher,
-		rounds:    rounds,
-	}, nil
 }
 
 func readDatabaseHeader[FieldLength uint16 | uint32](r io.Reader) (*keepassDatabaseHeader, error) {
