@@ -45,6 +45,12 @@ var tests = []diffTest{
 	{left: "mod-time-only-before.kdbx", right: "mod-time-only-after.kdbx", expectedOutput: "mod-time-only-expected.txt"},
 	{left: "onev4.kdbx", right: "twov4.kdbx", expectedOutput: "expected.txt"},
 	{left: "onev4-argon.kdbx", right: "twov4-argon.kdbx", expectedOutput: "expected.txt"},
+
+	{left: "onev4.kdbx", right: "onev4-add-expiration.kdbx", expectedOutput: "expiration-expected.txt"},
+	{left: "onev4.kdbx", right: "onev4-add-notes.kdbx", expectedOutput: "notes-expected.txt"},
+	{left: "onev4.kdbx", right: "onev4-add-tags.kdbx", expectedOutput: "tags-expected.txt"},
+	{left: "onev4.kdbx", right: "onev4-add-url.kdbx", expectedOutput: "url-expected.txt"},
+	{left: "onev4.kdbx", right: "onev4-add-username.kdbx", expectedOutput: "username-expected.txt"},
 	// XXX one.kdbx and twov4.kdbx too
 }
 
