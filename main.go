@@ -29,6 +29,7 @@ func init() {
 type entry struct {
 	Attributes       map[string]string
 	ModificationTime time.Time
+	ExpiryTime       time.Time
 	Tags             string
 }
 
@@ -67,9 +68,15 @@ func flattenGroupsHelper(group *KeePassGroup, groupMap map[string][]entry, path 
 			attributes["Password"] = fmt.Sprintf("sha256:%x", sum[:8])
 		}
 
+		var expiryTime time.Time
+		if e.Times.Expires {
+			expiryTime = e.Times.ExpiryTime
+		}
+
 		groupMap[fullGroupName] = append(groupMap[fullGroupName], entry{
 			Attributes:       attributes,
 			ModificationTime: e.Times.LastModificationTime,
+			ExpiryTime:       expiryTime,
 			Tags:             e.Tags,
 		})
 	}
@@ -250,6 +257,8 @@ func diff(f1, f2 io.Reader, firstFilename, secondFilename, password string, w io
 					msg = fmt.Sprintf("Entry '%s' has two different notes (%s is newer)", name, newer)
 				} else if !slices.Equal(entryOne.tags(), entryTwo.tags()) {
 					msg = fmt.Sprintf("Entry '%s' has two different sets of tags (%s is newer)", name, newer)
+				} else if !entryOne.ExpiryTime.Equal(entryTwo.ExpiryTime) {
+					msg = fmt.Sprintf("Entry '%s' has two different expiration times (%s is newer)", name, newer)
 				} else if !entryOne.ModificationTime.Equal(entryTwo.ModificationTime) {
 					msg = fmt.Sprintf("Entry '%s' looks the same, but has two different modification times (%s is newer)", name, newer)
 				}

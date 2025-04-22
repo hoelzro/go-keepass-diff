@@ -59,11 +59,15 @@ var KeepassIV []byte = []byte{0xe8, 0x30, 0x09, 0x4b, 0x97, 0x20, 0x5d, 0x2a}
 
 type KeePassTimes struct {
 	LastModificationTime time.Time
+	Expires              bool
+	ExpiryTime           time.Time
 }
 
 func (times *KeePassTimes) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	var unmarshalTimes struct {
-		LastModificationTime string `xml:"LastModificationTime"`
+		LastModificationTime string
+		Expires              bool
+		ExpiryTime           string
 	}
 
 	err := d.DecodeElement(&unmarshalTimes, &start)
@@ -83,7 +87,21 @@ func (times *KeePassTimes) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 		}
 	}
 
+	var expiryTime time.Time
+	if expiryTimeBytes, err := base64.StdEncoding.DecodeString(unmarshalTimes.ExpiryTime); err == nil {
+		// try base-64 encoded time…
+		expiryTime = time.Unix(int64(binary.LittleEndian.Uint64(expiryTimeBytes))+SecondsBetweenEpochAndYearZero, 0)
+	} else {
+		// … fall back to time as-is
+		expiryTime, err = time.Parse("2006-01-02T15:04:05Z", unmarshalTimes.ExpiryTime)
+		if err != nil {
+			return err
+		}
+	}
+
 	times.LastModificationTime = lastModificationTime
+	times.Expires = unmarshalTimes.Expires
+	times.ExpiryTime = expiryTime
 
 	return nil
 }
