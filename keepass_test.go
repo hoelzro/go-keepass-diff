@@ -215,4 +215,17 @@ func TestEntries(t *testing.T) {
 	if diff := cmp.Diff(expectedLastModificationTime, entry.Times.LastModificationTime); diff != "" {
 		t.Errorf("diff is wrong: %s", diff)
 	}
+
+	if entry.Tags != "tag,tag2" {
+		t.Errorf("tags not found")
+	}
+
+	if !entry.Times.Expires {
+		t.Errorf("incorrect Expires value")
+	}
+
+	expectedExpiryTime := time.Date(2024, 1, 17, 8, 38, 17, 0, cstTimeZone)
+	if diff := cmp.Diff(expectedExpiryTime, entry.Times.ExpiryTime); diff != "" {
+		t.Errorf("diff is wrong: %s", diff)
+	}
 }
