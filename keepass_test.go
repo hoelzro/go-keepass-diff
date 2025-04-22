@@ -177,7 +177,7 @@ func findEntry(db *KeePassGroup, targetTitle string) *KeePassEntry {
 }
 
 func TestEntries(t *testing.T) {
-	f, err := os.Open("testdata/onev4-add-attribute.kdbx")
+	f, err := os.Open("testdata/entries.kdbx")
 	if err != nil {
 		t.Fatal(err)
 	}
