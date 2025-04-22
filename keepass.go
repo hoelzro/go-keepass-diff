@@ -95,6 +95,7 @@ type KeePassEntry struct {
 	Times     KeePassTimes
 	KeyValues map[string]string // XXX member name?
 	History   []KeePassEntry
+	Tags      string
 }
 
 type KeePassGroup struct {

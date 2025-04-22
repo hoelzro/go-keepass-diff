@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -28,6 +29,7 @@ func init() {
 type entry struct {
 	Attributes       map[string]string
 	ModificationTime time.Time
+	Tags             string
 }
 
 func (e entry) name() string     { return e.Attributes["Title"] }
@@ -35,6 +37,7 @@ func (e entry) password() string { return e.Attributes["Password"] }
 func (e entry) username() string { return e.Attributes["UserName"] }
 func (e entry) notes() string    { return e.Attributes["Notes"] }
 func (e entry) url() string      { return e.Attributes["URL"] }
+func (e entry) tags() []string   { return strings.Split(e.Tags, ",") }
 
 func flattenGroupsHelper(group *KeePassGroup, groupMap map[string][]entry, path []string) {
 	path = append(path, group.Name)
@@ -67,6 +70,7 @@ func flattenGroupsHelper(group *KeePassGroup, groupMap map[string][]entry, path 
 		groupMap[fullGroupName] = append(groupMap[fullGroupName], entry{
 			Attributes:       attributes,
 			ModificationTime: e.Times.LastModificationTime,
+			Tags:             e.Tags,
 		})
 	}
 }
@@ -244,6 +248,8 @@ func diff(f1, f2 io.Reader, firstFilename, secondFilename, password string, w io
 					msg = fmt.Sprintf("Entry '%s' has two different passwords (%s is newer)", name, newer)
 				} else if entryOne.notes() != entryTwo.notes() {
 					msg = fmt.Sprintf("Entry '%s' has two different notes (%s is newer)", name, newer)
+				} else if !slices.Equal(entryOne.tags(), entryTwo.tags()) {
+					msg = fmt.Sprintf("Entry '%s' has two different sets of tags (%s is newer)", name, newer)
 				} else if !entryOne.ModificationTime.Equal(entryTwo.ModificationTime) {
 					msg = fmt.Sprintf("Entry '%s' looks the same, but has two different modification times (%s is newer)", name, newer)
 				}
